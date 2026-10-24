@@ -8,13 +8,14 @@ Built with [Three.js](https://threejs.org), TypeScript and [Vite](https://vite.d
 
 ## Run it
 
-You need Node.js 22 or newer.
+You need Node.js 22 or newer and [pnpm](https://pnpm.io) (the version is
+pinned in `package.json`; `corepack enable` or `npm install -g pnpm` gets it).
 
 ```sh
-npm install
-npm run dev      # opens a local server with live reload
-npm test         # unit tests for the table model and card loading
-npm run build    # type-check and build the site into dist/
+pnpm install
+pnpm dev         # opens a local server with live reload
+pnpm test        # unit tests for the table model and card loading
+pnpm build       # type-check and build the site into dist/
 ```
 
 ## Controls

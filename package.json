@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "A 3D tabletop for card games in the browser, built with Three.js.",
   "type": "module",
+  "packageManager": "pnpm@12.15.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
