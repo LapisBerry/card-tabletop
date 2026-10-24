@@ -1,0 +1,161 @@
+{
+  "id": "wild-west-sample",
+  "name": "Wild West sample deck",
+  "backLabel": "WILD WEST",
+  "cards": [
+    {
+      "id": "shot",
+      "name": "Shot",
+      "kind": "action",
+      "text": "Shoot a player you can reach. They lose 1 health unless they play Dodge.",
+      "copies": ["9C", "7D", "KH", "AS", "10S", "QH", "6C", "QD", "5D", "KS", "KC", "5S"]
+    },
+    {
+      "id": "dodge",
+      "name": "Dodge",
+      "kind": "action",
+      "text": "Play when you are shot to avoid losing health.",
+      "copies": ["10D", "AD", "5H", "JC", "6H", "3H", "7H", "2C"]
+    },
+    {
+      "id": "whiskey",
+      "name": "Whiskey",
+      "kind": "action",
+      "text": "Gain 1 health, up to your maximum.",
+      "copies": ["8H", "9H", "8D", "9D"]
+    },
+    {
+      "id": "saloon",
+      "name": "Saloon",
+      "kind": "action",
+      "text": "Every player gains 1 health.",
+      "copies": ["3S"]
+    },
+    {
+      "id": "stagecoach",
+      "name": "Stagecoach",
+      "kind": "action",
+      "text": "Draw 2 cards.",
+      "copies": ["4D", "6D"]
+    },
+    {
+      "id": "express-wagon",
+      "name": "Express Wagon",
+      "kind": "action",
+      "text": "Draw 3 cards.",
+      "copies": ["5C"]
+    },
+    {
+      "id": "general-store",
+      "name": "General Store",
+      "kind": "action",
+      "text": "Reveal one card per player. Starting with you, each player takes one.",
+      "copies": ["QC", "4H"]
+    },
+    {
+      "id": "steal",
+      "name": "Steal",
+      "kind": "action",
+      "text": "Take a card from a player at distance 1, from their hand or the table.",
+      "copies": ["9S", "4C", "7S"]
+    },
+    {
+      "id": "disarm",
+      "name": "Disarm",
+      "kind": "action",
+      "text": "Make any player discard a card from their hand or the table.",
+      "copies": ["4S", "2H", "QS"]
+    },
+    {
+      "id": "duel",
+      "name": "Duel",
+      "kind": "action",
+      "text": "Challenge a player. Take turns playing Shot; the first who cannot loses 1 health.",
+      "copies": ["2S", "JS"]
+    },
+    {
+      "id": "ambush",
+      "name": "Ambush",
+      "kind": "action",
+      "text": "Every other player plays Shot or loses 1 health.",
+      "copies": ["10H", "7C"]
+    },
+    {
+      "id": "gatling",
+      "name": "Gatling",
+      "kind": "action",
+      "text": "Shoot every other player.",
+      "copies": ["AC"]
+    },
+    {
+      "id": "barrel",
+      "name": "Barrel",
+      "kind": "equipment",
+      "text": "When you are shot, draw a card. On a heart, the shot misses.",
+      "copies": ["3C", "JD"]
+    },
+    {
+      "id": "scope",
+      "name": "Scope",
+      "kind": "equipment",
+      "text": "You see every other player at distance −1.",
+      "copies": ["6S"]
+    },
+    {
+      "id": "horse",
+      "name": "Horse",
+      "kind": "equipment",
+      "text": "Other players see you at distance +1.",
+      "copies": ["8C", "3D"]
+    },
+    {
+      "id": "jail",
+      "name": "Jail",
+      "kind": "equipment",
+      "text": "Put in front of another player. At the start of their turn they draw: unless it is a heart, they skip the turn.",
+      "copies": ["KD", "10C"]
+    },
+    {
+      "id": "dynamite",
+      "name": "Dynamite",
+      "kind": "equipment",
+      "text": "At the start of your turn draw a card. On spades 2 to 9 you lose 3 health; otherwise pass it left.",
+      "copies": ["JH"]
+    },
+    {
+      "id": "pistol",
+      "name": "Pistol",
+      "kind": "equipment",
+      "text": "Range 1. You may play any number of Shot cards on your turn.",
+      "copies": ["2D", "8S"]
+    },
+    {
+      "id": "revolver",
+      "name": "Revolver",
+      "kind": "equipment",
+      "text": "Range 2.",
+      "copies": ["AH"]
+    },
+    {
+      "id": "rifle",
+      "name": "Rifle",
+      "kind": "equipment",
+      "text": "Range 3.",
+      "copies": ["9C"]
+    },
+    {
+      "id": "carbine",
+      "name": "Carbine",
+      "kind": "equipment",
+      "text": "Range 4.",
+      "copies": ["7D"]
+    },
+    {
+      "id": "long-rifle",
+      "name": "Long Rifle",
+      "kind": "equipment",
+      "text": "Range 5.",
+      "copies": ["KH"]
+    }
+  ]
+}
