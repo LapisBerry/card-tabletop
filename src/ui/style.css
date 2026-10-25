@@ -18,6 +18,10 @@ body {
   height: 100%;
   overflow: hidden;
   background: #1d1915;
+  /* Dragging cards across the panels must not select their text. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 #table {
@@ -33,6 +37,7 @@ body {
 .badge,
 .help,
 .toolbar button,
+.actions,
 .error {
   background: var(--panel);
   border: 1px solid var(--panel-border);
@@ -65,9 +70,11 @@ body {
   position: fixed;
   left: 16px;
   bottom: 16px;
-  max-width: min(340px, calc(100vw - 32px));
-  padding: 12px 14px;
-  font-size: 13px;
+  max-width: min(320px, calc(100vw - 32px));
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
+  padding: 10px 14px;
+  font-size: 12px;
 }
 
 .help[hidden] {
@@ -85,7 +92,7 @@ body {
 .help dl {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 4px 12px;
+  gap: 3px 12px;
   margin: 0;
 }
 
@@ -97,6 +104,82 @@ body {
 .help dd {
   margin: 0;
   color: var(--muted);
+}
+
+.help dl + h2 {
+  margin-top: 12px;
+}
+
+/* Large picture of the card under the pointer */
+.preview {
+  position: fixed;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: min(260px, 28vw);
+  pointer-events: none;
+  filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.55));
+}
+
+.preview.left {
+  right: auto;
+  left: 16px;
+}
+
+.preview[hidden] {
+  display: none;
+}
+
+.preview canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 6%/4.3%;
+}
+
+/* Buttons for the selected stack */
+.actions {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+}
+
+.actions[hidden] {
+  display: none;
+}
+
+.actions .count {
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.actions button {
+  min-width: 44px;
+  min-height: 40px;
+  padding: 6px 12px;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  background: rgba(255, 240, 210, 0.08);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.actions button:hover {
+  border-color: var(--accent);
+}
+
+.actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .toolbar {
@@ -137,7 +220,7 @@ body {
 @media (max-width: 600px) {
   .help {
     font-size: 12px;
-    bottom: 68px;
+    bottom: 120px;
   }
 
   .badge p {
@@ -148,5 +231,16 @@ body {
   .toolbar {
     top: auto;
     bottom: 16px;
+  }
+
+  /* The card buttons sit above the view buttons, and the preview goes top right. */
+  .actions {
+    bottom: 68px;
+  }
+
+  .preview {
+    top: 16px;
+    transform: none;
+    width: 34vw;
   }
 }

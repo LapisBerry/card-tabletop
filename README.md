@@ -20,17 +20,32 @@ pnpm build       # type-check and build the site into dist/
 
 ## Controls
 
+**Cards**
+
+| Input | Does |
+| --- | --- |
+| Drag a card | Take the top card of its stack and carry it |
+| Shift + drag, or on touch hold still for a moment and then drag | Carry the whole stack |
+| Drop on another stack | Put the carried cards on top of it (it lights up green) |
+| Click or tap | Select a stack; buttons for it appear at the bottom |
+| Double-click, double-tap, or F | Flip (a stack flips like a real pile: order reverses) |
+| Q / E | Turn a quarter left / right |
+| Esc | Cancel a drag, or clear the selection |
+
+Keys act on the stack under the mouse, or on the selected stack. Hovering a
+face-up card shows it large at the side of the screen.
+
+**View**
+
 | Input | Does |
 | --- | --- |
 | Right-drag | Move the view |
 | Middle-drag, or Shift + right-drag | Tilt and turn the view |
 | Wheel | Zoom toward the pointer |
 | Arrow keys | Move the view |
-| One finger / two fingers (touch) | Move / zoom and turn |
+| One finger on the felt / two fingers (touch) | Move / zoom and turn |
 | H | Reset the view |
 | ? | Show or hide the controls panel |
-
-The left mouse button is kept free for picking up cards, which comes next.
 
 ## How it is put together
 
@@ -38,8 +53,9 @@ The left mouse button is kept free for picking up cards, which comes next.
 src/
   data/       card set JSON files
   model/      table state with no 3D code: cards, stacks, actions
-  view/       Three.js: table, camera, card meshes and card pictures
-  ui/         page styles
+  view/       Three.js: table, camera, card meshes, card pictures, and
+              mouse/touch/keyboard handling (interaction.ts)
+  ui/         page styles and the card preview
   main.ts     wires the model and the view together
 ```
 
@@ -49,6 +65,11 @@ src/
   multiplayer can work later.
 - **Everything on the table is a stack.** A loose card is a stack of one and a
   deck is a tall stack, so moving, stacking and splitting all work the same way.
+  The actions are `createStack`, `moveStack`, `splitStack`, `mergeStacks`,
+  `flipStack` and `turnStack`.
+- **Carrying cards is drawn by the view, not stored.** The table state changes
+  when a drag takes a card off a stack and when the cards are dropped, not on
+  every pointer move.
 - **Card pictures are drawn in code** on a canvas (`src/view/cardArt.ts`): plain
   text on the front and one shared back. Front pictures are made only for
   face-up cards and freed when no card shows them.

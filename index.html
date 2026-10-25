@@ -8,22 +8,30 @@
     <link rel="stylesheet" href="./src/ui/style.css" />
   </head>
   <body>
-    <canvas id="table" aria-label="3D card table"></canvas>
+    <canvas id="table" tabindex="0" aria-label="3D card table"></canvas>
 
     <header class="badge">
       <h1>Card Tabletop</h1>
-      <p>Prototype · table and cards</p>
+      <p>Prototype · card control</p>
     </header>
 
     <aside class="help" id="help" aria-label="Controls">
-      <h2>Controls</h2>
+      <h2>Cards</h2>
+      <dl>
+        <dt>Drag</dt><dd>Take the top card</dd>
+        <dt>Shift + drag (touch: hold, then drag)</dt><dd>Move the whole stack</dd>
+        <dt>Drop on a stack</dt><dd>Put it on top</dd>
+        <dt>Double-click or F</dt><dd>Flip</dd>
+        <dt>Q / E</dt><dd>Turn left / right</dd>
+        <dt>Esc</dt><dd>Cancel a drag</dd>
+      </dl>
+      <h2>View</h2>
       <dl>
         <dt>Right-drag</dt><dd>Move the view</dd>
         <dt>Middle-drag or Shift + right-drag</dt><dd>Tilt and turn</dd>
         <dt>Wheel</dt><dd>Zoom</dd>
         <dt>Arrow keys</dt><dd>Move the view</dd>
-        <dt>One finger</dt><dd>Move the view (touch)</dd>
-        <dt>Two fingers</dt><dd>Zoom and turn (touch)</dd>
+        <dt>Touch</dt><dd>One finger moves, two fingers zoom and turn</dd>
         <dt>H</dt><dd>Reset the view</dd>
         <dt>?</dt><dd>Show or hide this panel</dd>
       </dl>
@@ -32,6 +40,17 @@
     <div class="toolbar">
       <button type="button" id="reset-view">Reset view</button>
       <button type="button" id="toggle-help" aria-controls="help" aria-expanded="true">Controls</button>
+    </div>
+
+    <aside class="preview" id="preview" hidden aria-live="polite">
+      <canvas id="preview-card" role="img"></canvas>
+    </aside>
+
+    <div class="actions" id="actions" role="toolbar" aria-label="Selected cards" hidden>
+      <span class="count" id="actions-count"></span>
+      <button type="button" data-action="turn-left" title="Turn left (Q)" aria-label="Turn left">⟲</button>
+      <button type="button" data-action="flip" title="Flip (F)">Flip</button>
+      <button type="button" data-action="turn-right" title="Turn right (E)" aria-label="Turn right">⟳</button>
     </div>
 
     <p class="error" id="error" hidden></p>
