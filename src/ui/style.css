@@ -46,7 +46,7 @@ body {
 .help,
 .toolbar button,
 .actions,
-.deal,
+.panel,
 .hand-hint,
 .error {
   background: var(--panel);
@@ -176,7 +176,7 @@ body {
 }
 
 .actions button,
-.deal button {
+.panel button {
   min-width: 44px;
   min-height: 40px;
   padding: 6px 12px;
@@ -190,25 +190,32 @@ body {
 }
 
 .actions button:hover,
-.deal button:hover,
-.toolbar button:hover {
+.panel button:hover:not(:disabled),
+.toolbar button:hover:not(:disabled) {
   border-color: var(--accent);
 }
 
+.panel button:disabled,
+.toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .actions button:focus-visible,
-.deal button:focus-visible,
+.panel button:focus-visible,
 .toolbar button:focus-visible,
 .hand-card:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-.actions button[aria-expanded='true'] {
+.actions button[aria-expanded='true'],
+.toolbar button[aria-expanded='true'] {
   border-color: var(--accent);
   background: rgba(216, 178, 106, 0.18);
 }
 
-.deal {
+.panel {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -218,24 +225,24 @@ body {
   padding: 12px 14px;
 }
 
-.deal .stepper {
+.panel .stepper {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 14px;
 }
 
-.deal .stepper span {
+.panel .stepper span {
   margin-right: 4px;
   color: var(--muted);
 }
 
-.deal .stepper button {
+.panel .stepper button {
   min-width: 40px;
   padding: 6px;
 }
 
-.deal output {
+.panel output {
   min-width: 2ch;
   text-align: center;
   font-size: 17px;
@@ -243,23 +250,40 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.deal button.primary {
+.panel button.primary {
   color: #231c12;
   font-weight: 600;
   background: var(--accent);
   border-color: var(--accent);
 }
 
-.deal button.primary:hover {
+.panel button.primary:hover {
   background: #e6c486;
 }
 
-.deal .note {
+.panel .note {
   flex-basis: 100%;
   margin: 0;
   font-size: 12px;
   color: var(--muted);
   text-align: center;
+}
+
+/* New game options, under the toolbar */
+.new-game {
+  position: fixed;
+  top: 64px;
+  right: 16px;
+  max-width: min(460px, calc(100vw - 32px));
+}
+
+/* The box drawn on the table to select several stacks */
+.select-box {
+  position: fixed;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: rgba(216, 178, 106, 0.12);
+  pointer-events: none;
 }
 
 /* The player's hand: a fan of cards along the bottom edge */
@@ -373,6 +397,13 @@ body {
   cursor: pointer;
 }
 
+.toolbar button.icon {
+  min-width: 36px;
+  padding: 6px 8px;
+  font-size: 17px;
+  line-height: 1;
+}
+
 .error {
   position: fixed;
   top: 50%;
@@ -396,20 +427,24 @@ body {
 }
 
 @media (max-width: 600px) {
+  /* The title gives way to the buttons along the top. */
   .badge {
-    top: 8px;
-    left: 8px;
-    padding: 8px 12px;
-  }
-
-  .badge p {
     display: none;
   }
 
   .toolbar {
     top: 8px;
     right: 8px;
-    gap: 6px;
+    gap: 5px;
+  }
+
+  .toolbar button {
+    padding: 8px 9px;
+  }
+
+  .new-game {
+    top: 56px;
+    right: 8px;
   }
 
   .help {

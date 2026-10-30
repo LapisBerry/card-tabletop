@@ -7,13 +7,40 @@
  */
 import { CARD_HEIGHT, CARD_WIDTH, TABLE_DEPTH, TABLE_WIDTH } from './dimensions';
 import type { Seat } from './layout';
-import { shuffled, type Random } from './setup';
-import type { Action, IdGenerator, StackState, TableState } from './table';
+import { shuffled, type Random } from './random';
+import { reduce, type Action, type IdGenerator, type StackState, type TableState } from './table';
 
 export function planShuffle(state: TableState, stackId: string, random: Random = Math.random): Action | null {
   const stack = state.stacks[stackId];
   if (!stack || stack.cardIds.length < 2) return null;
   return { type: 'shuffleStack', stackId, order: shuffled(stack.cardIds, random) };
+}
+
+/**
+ * Piles several stacks into one where the lowest of them lies. Stacks put down
+ * later go on top and each keeps its own order, as when sweeping cards together.
+ */
+export function planPile(state: TableState, stackIds: readonly string[]): Action | null {
+  const wanted = new Set(stackIds);
+  // Object order is the placement order, so the first match is the one lying lowest.
+  const [bottom, ...rest] = Object.values(state.stacks).filter((stack) => wanted.has(stack.id));
+  if (!bottom || rest.length === 0) return null;
+  return { type: 'gatherStacks', targetId: bottom.id, sourceIds: rest.map((stack) => stack.id) };
+}
+
+/** Piles several stacks into one and shuffles it, as when shuffling the discard pile back into the deck. */
+export function planShuffleTogether(
+  state: TableState,
+  stackIds: readonly string[],
+  random: Random = Math.random,
+): Action[] {
+  const pile = planPile(state, stackIds);
+  if (!pile || pile.type !== 'gatherStacks') {
+    const shuffle = stackIds[0] ? planShuffle(state, stackIds[0], random) : null;
+    return shuffle ? [shuffle] : [];
+  }
+  const shuffle = planShuffle(reduce(state, pile), pile.targetId, random);
+  return shuffle ? [pile, shuffle] : [pile];
 }
 
 /**

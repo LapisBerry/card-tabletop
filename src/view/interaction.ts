@@ -2,16 +2,17 @@ import * as THREE from 'three';
 import type { TableCommands } from '../model/commands';
 import { TABLE_DEPTH, TABLE_WIDTH } from '../model/dimensions';
 import type { Zone } from '../model/layout';
-import { halfSize } from '../model/plans';
-import type { IdGenerator, Table } from '../model/table';
+import { footprintsOverlap, halfSize } from '../model/plans';
+import type { IdGenerator, StackState, Table } from '../model/table';
 import type { CardLayer } from './cardLayer';
-import type { HighlightKind, Highlights } from './highlights';
+import type { FrameSpot, Highlights } from './highlights';
 
 /** How far (in screen pixels) a press must travel before it counts as a drag rather than a click. */
 const DRAG_THRESHOLD = { mouse: 5, touch: 10 } as const;
 /**
- * On touch, holding a card this long without moving grabs the whole stack instead of the top card.
- * Mouse users have Shift for that, so a slow start with the mouse never grabs a whole deck by surprise.
+ * On touch, holding still this long grabs the whole stack (or, on empty
+ * table, starts a selection box). Mouse users have Shift and a plain drag for
+ * those, so a slow start with the mouse never grabs a whole deck by surprise.
  */
 const LONG_PRESS_MS = 450;
 /** Two clicks on the same stack within this time flip it. */
@@ -31,8 +32,13 @@ export interface HandDock {
   showDrop(index: number | null): void;
 }
 
+/** The camera controls, which a touch selection box switches off so the finger does not move the view. */
+export interface CameraLock {
+  enabled: boolean;
+}
+
 export interface InteractionListener {
-  /** The stack under the mouse, the selected stack, or whether a drag is going on changed. */
+  /** The stack under the mouse, the selection, or whether a drag is going on changed. */
   (): void;
 }
 
@@ -45,8 +51,24 @@ interface Press {
   /** From the stack centre to the grabbed point, on the table plane. */
   grabOffset: THREE.Vector2;
   wholeStack: boolean;
+  /** Ctrl or Cmd was held: a click adds the stack to the selection or takes it out. */
+  toggle: boolean;
+  /** A touch held still long enough: a release without moving adds the stack to the selection or takes it out. */
+  longPressed: boolean;
   longPressTimer: number | undefined;
   drag: Drag | null;
+}
+
+/** A press on empty table: a click clears the selection, a drag draws a selection box. */
+interface EmptyPress {
+  pointerId: number;
+  pointerType: string;
+  startX: number;
+  startY: number;
+  /** Ctrl, Cmd or Shift was held: the box adds to the selection instead of replacing it. */
+  additive: boolean;
+  longPressTimer: number | undefined;
+  box: { base: string[] } | null;
 }
 
 type Origin =
@@ -54,10 +76,21 @@ type Origin =
   | { kind: 'whole' }
   | { kind: 'hand'; handId: string; index: number };
 
-interface Drag {
+/** Another selected stack carried along with the one under the pointer, at a fixed offset from it. */
+interface Follower {
   stackId: string;
-  /** Where the carried cards came from, to put them back if the drag is cancelled. */
+  dx: number;
+  dz: number;
+  x: number;
+  z: number;
+}
+
+interface Drag {
+  /** The stack under the pointer. */
+  stackId: string;
+  /** Where the carried cards came from. */
   origin: Origin;
+  followers: Follower[];
   x: number;
   z: number;
   /** What a drop right now would do: land on a stack, snap to a marked spot, go into the hand, or lie where it is. */
@@ -76,21 +109,28 @@ interface Drag {
  * - Dropping onto another stack puts the cards on top of it; near a marked
  *   spot they snap onto it; over the hand they go into the hand.
  * - Click or tap selects a stack; double-click or double-tap flips it.
- * - Keys work on the stack under the mouse, or else the selected one:
- *   F flip, Q / E turn, S shuffle, D draw one, 1-9 draw that many, Esc cancel.
+ *   Ctrl / Cmd + click, or on touch a hold and release, adds a stack to the
+ *   selection; a drag on empty table (on touch: hold, then drag) draws a box
+ *   around the stacks to select. Dragging any selected stack carries them all.
+ * - Keys work on the stack under the mouse, or else the selection:
+ *   F flip, Q / E turn, S shuffle, D draw one, 1-9 draw that many, G gather,
+ *   L spread, Esc cancel; Ctrl + A selects all, Ctrl + Z undoes.
  *
- * Presses that start on empty table, and the right and middle mouse buttons,
- * are left to the camera controls.
+ * Other presses on empty table, and the right and middle mouse buttons, are
+ * left to the camera controls.
  */
 export class CardInteraction {
   private press: Press | null = null;
   /** Pointers the camera controls own, such as a one-finger pan on empty table. */
   private readonly cameraPointers = new Set<number>();
-  private emptyPress: { pointerId: number; x: number; y: number } | null = null;
+  private emptyPress: EmptyPress | null = null;
   private lastTap: { stackId: string; time: number } | null = null;
   private hoveredId: string | null = null;
-  private selectedId: string | null = null;
+  /** Selected stacks, oldest first: the last one is the main one, used where only one stack makes sense. */
+  private selectionIds: string[] = [];
   private hand: HandDock | null = null;
+  private cameraLock: CameraLock | null = null;
+  private readonly boxElement: HTMLElement;
   private readonly listeners = new Set<InteractionListener>();
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
@@ -118,9 +158,18 @@ export class CardInteraction {
     window.addEventListener('keydown', (e) => this.onKeyDown(e), { signal });
     window.addEventListener('blur', () => this.cancelPress(), { signal });
     canvas.addEventListener('pointerleave', () => this.setHovered(null), { signal });
-    this.unsubscribeTable = table.subscribe((state) => {
-      if (this.selectedId && !state.stacks[this.selectedId]) this.setSelected(null);
-      if (this.hoveredId && !state.stacks[this.hoveredId]) this.setHovered(null);
+
+    this.boxElement = document.createElement('div');
+    this.boxElement.className = 'select-box';
+    this.boxElement.hidden = true;
+    document.body.append(this.boxElement);
+
+    this.unsubscribeTable = table.subscribe((state, change) => {
+      // After an undo, a redo or a new game, ids may name different stacks, so start the selection afresh.
+      const kept =
+        change.type === 'restore' || change.type === 'load' ? [] : this.selectionIds.filter((id) => state.stacks[id]);
+      if (kept.length !== this.selectionIds.length) this.selectionIds = kept;
+      if (this.hoveredId && !state.stacks[this.hoveredId]) this.hoveredId = null;
       this.refreshHighlights();
       this.emit();
     });
@@ -131,31 +180,64 @@ export class CardInteraction {
     this.hand = hand;
   }
 
+  /** Connects the camera controls, so a touch selection box can hold the view still. */
+  setCameraLock(lock: CameraLock): void {
+    this.cameraLock = lock;
+  }
+
   get hovered(): string | null {
     return this.hoveredId;
   }
 
+  /** The main selected stack: the one picked last. */
   get selected(): string | null {
-    return this.selectedId;
+    return this.selectionIds[this.selectionIds.length - 1] ?? null;
+  }
+
+  /** Every selected stack, oldest first. */
+  get selection(): readonly string[] {
+    return this.selectionIds;
   }
 
   get dragging(): boolean {
     return Boolean(this.press?.drag);
   }
 
-  /** Calls `listener` when the hovered or selected stack, the drag state, or the table changes. */
+  /** Calls `listener` when the hovered stack, the selection, the drag state, or the table changes. */
   subscribe(listener: InteractionListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  /** The stack that keyboard keys work on. */
-  get focusStackId(): string | null {
-    return this.press?.drag?.stackId ?? this.hoveredId ?? this.selectedId;
+  /**
+   * The stacks that keys work on: the carried ones during a drag; else the one
+   * under the mouse, or the whole selection if that one is part of it; else the selection.
+   */
+  get keyTargets(): string[] {
+    const drag = this.press?.drag;
+    if (drag) return this.carriedIds(drag);
+    const hovered = this.hoveredId;
+    if (hovered && !this.selectionIds.includes(hovered)) return [hovered];
+    return [...this.selectionIds];
   }
 
+  /** Selects one stack, or clears the selection with `null`. */
   select(stackId: string | null): void {
-    this.setSelected(stackId && this.table.state.stacks[stackId] ? stackId : null);
+    this.setSelection(stackId ? [stackId] : []);
+  }
+
+  /** Selects exactly these stacks. */
+  setSelection(stackIds: readonly string[]): void {
+    const state = this.table.state;
+    const next = [...new Set(stackIds)].filter((id) => state.stacks[id]);
+    if (next.length === this.selectionIds.length && next.every((id, i) => id === this.selectionIds[i])) return;
+    this.selectionIds = next;
+    this.refreshHighlights();
+    this.emit();
+  }
+
+  selectAll(): void {
+    this.setSelection(Object.keys(this.table.state.stacks));
   }
 
   /**
@@ -168,10 +250,9 @@ export class CardInteraction {
     const index = hand?.cardIds.indexOf(cardId) ?? -1;
     if (index < 0) return;
     const point = this.tablePoint(e);
-    const [hw, hh] = halfSize(0);
-    const x = THREE.MathUtils.clamp(point?.x ?? 0, -TABLE_WIDTH / 2 + hw, TABLE_WIDTH / 2 - hw);
-    const z = THREE.MathUtils.clamp(point?.z ?? 0, -TABLE_DEPTH / 2 + hh, TABLE_DEPTH / 2 - hh);
+    const [x, z] = clampToTable(point?.x ?? 0, point?.z ?? 0, 0);
     const stackId = this.ids.make('stack');
+    this.table.checkpoint();
     this.table.dispatch({ type: 'playToTable', handId, cardId, faceUp: true, newStackId: stackId, x, z, turn: 0 });
     const press: Press = {
       pointerId: e.pointerId,
@@ -181,12 +262,14 @@ export class CardInteraction {
       startY: e.clientY,
       grabOffset: new THREE.Vector2(0, 0),
       wholeStack: true,
+      toggle: false,
+      longPressed: false,
       longPressTimer: undefined,
-      drag: { stackId, origin: { kind: 'hand', handId, index }, x, z, target: { kind: 'table' } },
+      drag: { stackId, origin: { kind: 'hand', handId, index }, followers: [], x, z, target: { kind: 'table' } },
     };
     this.press = press;
     this.setHovered(null);
-    this.setSelected(stackId);
+    this.select(stackId);
     this.moveDrag(press, e);
     this.emit();
   }
@@ -195,6 +278,7 @@ export class CardInteraction {
     this.cancelPress();
     this.abort.abort();
     this.unsubscribeTable();
+    this.boxElement.remove();
   }
 
   // --- pointer handling -------------------------------------------------
@@ -203,8 +287,8 @@ export class CardInteraction {
     if (e.target !== this.canvas) return;
     // A pointer that comes down again was lifted somewhere we did not hear about.
     this.cameraPointers.delete(e.pointerId);
-    if (this.press) {
-      // A second finger while carrying a card: keep it away from the camera too.
+    if (this.press || this.emptyPress?.box) {
+      // Another finger while carrying a card or drawing a box: keep it away from the camera too.
       e.stopPropagation();
       return;
     }
@@ -212,7 +296,9 @@ export class CardInteraction {
     const hit = primary && this.cameraPointers.size === 0 ? this.pick(e) : null;
     if (!hit) {
       this.cameraPointers.add(e.pointerId);
-      if (primary) this.emptyPress = { pointerId: e.pointerId, x: e.clientX, y: e.clientY };
+      // A second finger turns a one-finger press into a camera gesture.
+      if (primary && this.cameraPointers.size === 1) this.startEmptyPress(e);
+      else this.endEmptyPress(true);
       return;
     }
 
@@ -233,10 +319,12 @@ export class CardInteraction {
       // Measured on the felt, like every carried position, so the cards do not jump when picked up.
       grabOffset: new THREE.Vector2(point.x - stack.x, point.z - stack.z),
       wholeStack: e.shiftKey || stack.cardIds.length === 1,
+      toggle: e.ctrlKey || e.metaKey,
+      longPressed: false,
       longPressTimer: undefined,
       drag: null,
     };
-    if (!press.wholeStack && e.pointerType !== 'mouse') {
+    if (e.pointerType !== 'mouse') {
       press.longPressTimer = window.setTimeout(() => this.onLongPress(press), LONG_PRESS_MS);
     }
     this.press = press;
@@ -245,6 +333,7 @@ export class CardInteraction {
   private onLongPress(press: Press): void {
     if (this.press !== press || press.drag) return;
     press.wholeStack = true;
+    press.longPressed = true;
     const stack = this.table.state.stacks[press.stackId];
     if (!stack) return;
     // Raise the whole stack a little to show it is now held as one.
@@ -256,11 +345,15 @@ export class CardInteraction {
     const press = this.press;
     if (press && e.pointerId === press.pointerId) {
       if (!press.drag) {
-        const limit = press.pointerType === 'mouse' ? DRAG_THRESHOLD.mouse : DRAG_THRESHOLD.touch;
-        if (Math.hypot(e.clientX - press.startX, e.clientY - press.startY) < limit) return;
+        if (this.distance(e, press.startX, press.startY) < this.threshold(press.pointerType)) return;
         this.startDrag(press, e.shiftKey);
       }
       this.moveDrag(press, e);
+      return;
+    }
+    const empty = this.emptyPress;
+    if (empty && e.pointerId === empty.pointerId) {
+      this.moveEmptyPress(empty, e);
       return;
     }
     if (!press && e.pointerType === 'mouse' && this.cameraPointers.size === 0) {
@@ -270,10 +363,11 @@ export class CardInteraction {
 
   private onPointerUp(e: PointerEvent, cancelled: boolean): void {
     this.cameraPointers.delete(e.pointerId);
-    if (this.emptyPress?.pointerId === e.pointerId) {
-      const moved = Math.hypot(e.clientX - this.emptyPress.x, e.clientY - this.emptyPress.y);
-      this.emptyPress = null;
-      if (!cancelled && moved < DRAG_THRESHOLD.touch) this.setSelected(null);
+    const empty = this.emptyPress;
+    if (empty?.pointerId === e.pointerId) {
+      const click = !empty.box && this.distance(e, empty.startX, empty.startY) < DRAG_THRESHOLD.touch;
+      this.endEmptyPress(cancelled);
+      if (click && !cancelled && !empty.additive) this.select(null);
     }
     const press = this.press;
     if (!press || e.pointerId !== press.pointerId) return;
@@ -283,12 +377,19 @@ export class CardInteraction {
       this.endDrag(press.drag, cancelled);
     } else {
       this.cards.setLift(null);
-      if (!cancelled) this.onTap(press.stackId);
+      if (!cancelled) this.onTap(press);
     }
     this.emit();
   }
 
-  private onTap(stackId: string): void {
+  private onTap(press: Press): void {
+    const { stackId } = press;
+    if (press.toggle || press.longPressed) {
+      this.lastTap = null;
+      const has = this.selectionIds.includes(stackId);
+      this.setSelection(has ? this.selectionIds.filter((id) => id !== stackId) : [...this.selectionIds, stackId]);
+      return;
+    }
     const now = performance.now();
     if (this.lastTap && this.lastTap.stackId === stackId && now - this.lastTap.time < DOUBLE_TAP_MS) {
       this.lastTap = null;
@@ -296,23 +397,41 @@ export class CardInteraction {
     } else {
       this.lastTap = { stackId, time: now };
     }
-    this.setSelected(stackId);
+    this.select(stackId);
   }
 
   private startDrag(press: Press, shiftKey: boolean): void {
     window.clearTimeout(press.longPressTimer);
-    const stack = this.table.state.stacks[press.stackId];
+    const state = this.table.state;
+    const stack = state.stacks[press.stackId];
     if (!stack) return;
-    const whole = press.wholeStack || shiftKey || stack.cardIds.length === 1;
+    this.table.checkpoint();
+    const inGroup = this.selectionIds.length > 1 && this.selectionIds.includes(stack.id);
+    const whole = inGroup || press.wholeStack || shiftKey || stack.cardIds.length === 1;
     let drag: Drag;
     if (whole) {
-      drag = { stackId: stack.id, origin: { kind: 'whole' }, x: stack.x, z: stack.z, target: { kind: 'table' } };
+      const followers = inGroup
+        ? this.selectionIds.flatMap((id): Follower[] => {
+            const other = state.stacks[id];
+            if (!other || id === stack.id) return [];
+            return [{ stackId: id, dx: other.x - stack.x, dz: other.z - stack.z, x: other.x, z: other.z }];
+          })
+        : [];
+      drag = {
+        stackId: stack.id,
+        origin: { kind: 'whole' },
+        followers,
+        x: stack.x,
+        z: stack.z,
+        target: { kind: 'table' },
+      };
     } else {
       const newStackId = this.ids.make('stack');
       this.table.dispatch({ type: 'splitStack', stackId: stack.id, count: 1, newStackId, x: stack.x, z: stack.z });
       drag = {
         stackId: newStackId,
         origin: { kind: 'split', fromStackId: stack.id },
+        followers: [],
         x: stack.x,
         z: stack.z,
         target: { kind: 'table' },
@@ -321,25 +440,39 @@ export class CardInteraction {
     press.drag = drag;
     this.lastTap = null;
     this.setHovered(null);
-    this.setSelected(drag.stackId);
+    if (!inGroup) this.select(drag.stackId);
+    this.refreshHighlights();
   }
 
   private moveDrag(press: Press, e: PointerEvent): void {
     const drag = press.drag;
     if (!drag) return;
-    const stack = this.table.state.stacks[drag.stackId];
+    const state = this.table.state;
+    const stack = state.stacks[drag.stackId];
     // The spot on the felt under the pointer is where the cards will land; they float just above it.
     const point = this.tablePoint(e);
     if (!stack) return;
     if (point) {
-      const [hw, hh] = halfSize(stack.turn);
-      drag.x = THREE.MathUtils.clamp(point.x - press.grabOffset.x, -TABLE_WIDTH / 2 + hw, TABLE_WIDTH / 2 - hw);
-      drag.z = THREE.MathUtils.clamp(point.z - press.grabOffset.y, -TABLE_DEPTH / 2 + hh, TABLE_DEPTH / 2 - hh);
+      [drag.x, drag.z] = clampToTable(point.x - press.grabOffset.x, point.z - press.grabOffset.y, stack.turn);
+      for (const follower of drag.followers) {
+        const turn = state.stacks[follower.stackId]?.turn ?? 0;
+        [follower.x, follower.z] = clampToTable(drag.x + follower.dx, drag.z + follower.dz, turn);
+      }
     }
     drag.target = this.dropTarget(drag, e);
     this.hand?.showDrop(drag.target.kind === 'hand' ? drag.target.index : null);
-    const floor = drag.target.kind === 'stack' ? this.cards.topY(drag.target.stackId) : 0;
-    this.cards.setLift({ stackId: drag.stackId, x: drag.x, z: drag.z, y: floor + CARRY_HEIGHT });
+    const carried = this.carriedIds(drag);
+    const targetTop = drag.target.kind === 'stack' ? this.cards.topY(drag.target.stackId) : 0;
+    const leaderFloor = Math.max(targetTop, this.floorUnder(drag.stackId, drag.x, drag.z, carried));
+    this.cards.setLifts([
+      { stackId: drag.stackId, x: drag.x, z: drag.z, y: leaderFloor + CARRY_HEIGHT },
+      ...drag.followers.map((f) => ({
+        stackId: f.stackId,
+        x: f.x,
+        z: f.z,
+        y: this.floorUnder(f.stackId, f.x, f.z, carried) + CARRY_HEIGHT,
+      })),
+    ]);
     this.refreshHighlights();
   }
 
@@ -347,39 +480,46 @@ export class CardInteraction {
     this.hand?.showDrop(null);
     const state = this.table.state;
     if (!state.stacks[drag.stackId]) {
-      this.cards.setLift(null);
+      this.cards.setLifts([]);
       return;
     }
     const target = drag.target;
+    // Carried stacks are put down in the order they lay, so the ones on top stay on top.
+    const carried = new Set(this.carriedIds(drag));
+    const inOrder = Object.keys(state.stacks).filter((id) => carried.has(id));
     if (cancelled) {
-      // Put the cards back where they came from.
-      if (drag.origin.kind === 'split' && state.stacks[drag.origin.fromStackId]) {
-        this.table.dispatch({ type: 'mergeStacks', sourceId: drag.stackId, targetId: drag.origin.fromStackId });
-        this.setSelected(drag.origin.fromStackId);
-      } else if (drag.origin.kind === 'hand') {
-        const { handId, index } = drag.origin;
-        this.table.dispatch({ type: 'stackToHand', stackId: drag.stackId, handId, index });
-      }
+      // Put everything back as it was before the drag began.
+      this.table.cancelStep();
+      if (drag.origin.kind === 'split') this.select(drag.origin.fromStackId);
     } else if (target.kind === 'hand') {
-      this.table.dispatch({
-        type: 'stackToHand',
-        stackId: drag.stackId,
-        handId: this.commands.handId,
-        index: target.index,
-      });
+      let index = target.index;
+      for (const stackId of inOrder) {
+        const n = this.table.state.stacks[stackId]?.cardIds.length ?? 0;
+        this.table.dispatch({ type: 'stackToHand', stackId, handId: this.commands.handId, index });
+        index += n;
+      }
     } else if (target.kind === 'stack' && state.stacks[target.stackId]) {
-      this.table.dispatch({ type: 'mergeStacks', sourceId: drag.stackId, targetId: target.stackId });
-      this.setSelected(target.stackId);
-    } else if (target.kind === 'zone') {
-      this.table.dispatch({ type: 'moveStack', stackId: drag.stackId, x: target.zone.x, z: target.zone.z });
+      for (const sourceId of inOrder) this.table.dispatch({ type: 'mergeStacks', sourceId, targetId: target.stackId });
+      this.select(target.stackId);
     } else {
-      this.table.dispatch({ type: 'moveStack', stackId: drag.stackId, x: round(drag.x), z: round(drag.z) });
+      // A marked spot pulls the stack under the pointer onto it; any others keep their places around it.
+      const [x, z] = target.kind === 'zone' ? [target.zone.x, target.zone.z] : [round(drag.x), round(drag.z)];
+      const places = new Map<string, [number, number]>([[drag.stackId, [x, z]]]);
+      for (const f of drag.followers) {
+        const [fx, fz] = clampToTable(x + f.dx, z + f.dz, state.stacks[f.stackId]?.turn ?? 0);
+        places.set(f.stackId, [round(fx), round(fz)]);
+      }
+      for (const stackId of inOrder) {
+        const [px, pz] = places.get(stackId) ?? [x, z];
+        this.table.dispatch({ type: 'moveStack', stackId, x: px, z: pz });
+      }
     }
-    this.cards.setLift(null);
+    this.cards.setLifts([]);
     this.refreshHighlights();
   }
 
   private cancelPress(): void {
+    this.endEmptyPress(true);
     const press = this.press;
     if (!press) return;
     window.clearTimeout(press.longPressTimer);
@@ -389,40 +529,151 @@ export class CardInteraction {
     this.emit();
   }
 
+  // --- selection box --------------------------------------------------------
+
+  private startEmptyPress(e: PointerEvent): void {
+    const empty: EmptyPress = {
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+      startX: e.clientX,
+      startY: e.clientY,
+      additive: e.ctrlKey || e.metaKey || e.shiftKey,
+      longPressTimer: undefined,
+      box: null,
+    };
+    if (e.pointerType !== 'mouse') {
+      // On touch a finger on the felt moves the view; holding it still first draws a box instead.
+      empty.longPressTimer = window.setTimeout(() => {
+        if (this.emptyPress !== empty || this.cameraPointers.size > 1) return;
+        if (this.cameraLock) this.cameraLock.enabled = false;
+        empty.additive = true;
+        this.startBox(empty);
+        navigator.vibrate?.(15);
+      }, LONG_PRESS_MS);
+    }
+    this.emptyPress = empty;
+  }
+
+  private moveEmptyPress(empty: EmptyPress, e: PointerEvent): void {
+    if (!empty.box) {
+      if (this.distance(e, empty.startX, empty.startY) < this.threshold(empty.pointerType)) return;
+      window.clearTimeout(empty.longPressTimer);
+      // A touch that moves before the hold is a pan, which belongs to the camera.
+      if (empty.pointerType !== 'mouse') {
+        this.emptyPress = null;
+        return;
+      }
+      this.startBox(empty);
+    }
+    this.updateBox(empty, e.clientX, e.clientY);
+  }
+
+  private startBox(empty: EmptyPress): void {
+    empty.box = { base: empty.additive ? [...this.selectionIds] : [] };
+    this.setHovered(null);
+    this.updateBox(empty, empty.startX, empty.startY);
+    this.boxElement.hidden = false;
+  }
+
+  /** Draws the box from where the press began to the pointer, and selects the stacks whose centres are inside it. */
+  private updateBox(empty: EmptyPress, clientX: number, clientY: number): void {
+    const box = empty.box;
+    if (!box) return;
+    const left = Math.min(empty.startX, clientX);
+    const top = Math.min(empty.startY, clientY);
+    const right = Math.max(empty.startX, clientX);
+    const bottom = Math.max(empty.startY, clientY);
+    Object.assign(this.boxElement.style, {
+      left: `${left}px`,
+      top: `${top}px`,
+      width: `${right - left}px`,
+      height: `${bottom - top}px`,
+    });
+    const rect = this.canvas.getBoundingClientRect();
+    const inside = Object.values(this.table.state.stacks)
+      .filter((stack) => {
+        const p = this.scratchPoint.set(stack.x, this.cards.topY(stack.id), stack.z).project(this.camera);
+        const x = rect.left + ((p.x + 1) / 2) * rect.width;
+        const y = rect.top + ((1 - p.y) / 2) * rect.height;
+        return x >= left && x <= right && y >= top && y <= bottom;
+      })
+      .map((stack) => stack.id);
+    this.setSelection([...box.base, ...inside]);
+  }
+
+  private endEmptyPress(cancelled: boolean): void {
+    const empty = this.emptyPress;
+    if (!empty) return;
+    window.clearTimeout(empty.longPressTimer);
+    this.emptyPress = null;
+    if (!empty.box) return;
+    this.boxElement.hidden = true;
+    if (this.cameraLock) this.cameraLock.enabled = true;
+    if (cancelled) this.setSelection(empty.box.base);
+  }
+
   // --- keyboard -----------------------------------------------------------
 
   private onKeyDown(e: KeyboardEvent): void {
-    if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;
+    if (isTyping(e.target)) return;
     const key = e.key.toLowerCase();
-    if (key === 'escape') {
-      if (this.press) this.cancelPress();
-      else this.setSelected(null);
+    if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+      if (this.press || this.emptyPress?.box) return;
+      if (key === 'a') this.selectAll();
+      else if (key === 'z' && !e.shiftKey) this.commands.undo();
+      else if ((key === 'z' && e.shiftKey) || key === 'y') this.commands.redo();
+      else return;
       e.preventDefault();
       return;
     }
-    const stackId = this.focusStackId;
-    if (!stackId) return;
-    const carrying = Boolean(this.press?.drag);
-    if (key === 'f') this.commands.flip(stackId);
-    else if (key === 'q') this.commands.turn(stackId, -1);
-    else if (key === 'e') this.commands.turn(stackId, 1);
-    // Commands that pull cards out of a stack wait until nothing is being carried.
-    else if (key === 's' && !carrying) this.commands.shuffle(stackId);
-    else if (key === 'd' && !carrying) this.commands.draw(stackId, 1);
-    else if (/^[1-9]$/.test(key) && !carrying) this.commands.draw(stackId, Number(key));
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (key === 'escape') {
+      if (this.press || this.emptyPress) this.cancelPress();
+      else this.select(null);
+      e.preventDefault();
+      return;
+    }
+    const targets = this.keyTargets;
+    if (targets.length === 0) return;
+    if (this.press?.drag) {
+      // While carrying, flips and turns are part of the same move, and Undo takes them back with it.
+      if (key === 'f') {
+        for (const stackId of targets) this.table.dispatch({ type: 'flipStack', stackId });
+      } else if (key === 'q' || key === 'e') {
+        const by = key === 'q' ? -1 : 1;
+        for (const stackId of targets) this.table.dispatch({ type: 'turnStack', stackId, by });
+      } else {
+        return;
+      }
+      e.preventDefault();
+      return;
+    }
+    if (key === 'f') this.commands.flip(targets);
+    else if (key === 'q') this.commands.turn(targets, -1);
+    else if (key === 'e') this.commands.turn(targets, 1);
+    else if (key === 's') this.commands.shuffle(targets);
+    else if (key === 'd' && !e.shiftKey) this.commands.draw(targets, 1);
+    else if (/^[1-9]$/.test(key)) this.commands.draw(targets, Number(key));
+    else if (key === 'g') this.commands.gather(targets);
+    else if (key === 'l' && targets.length === 1 && targets[0]) this.commands.spread(targets[0]);
     else return;
     e.preventDefault();
   }
 
   // --- helpers ------------------------------------------------------------
 
+  private carriedIds(drag: Drag): string[] {
+    return [drag.stackId, ...drag.followers.map((f) => f.stackId)];
+  }
+
   private dropTarget(drag: Drag, e: PointerEvent): Drag['target'] {
     if (this.hand?.hit(e.clientX, e.clientY)) return { kind: 'hand', index: this.hand.indexAt(e.clientX) };
-    const stack = this.nearest(Object.values(this.table.state.stacks), drag);
+    const carried = new Set(this.carriedIds(drag));
+    const resting = Object.values(this.table.state.stacks).filter((s) => !carried.has(s.id));
+    const stack = this.nearest(resting, drag);
     if (stack) return { kind: 'stack', stackId: stack.id };
     // A marked spot only catches cards while nothing lies on it; then the pile there takes over.
-    const occupied = (zone: Zone) =>
-      Object.values(this.table.state.stacks).some((s) => s.id !== drag.stackId && s.x === zone.x && s.z === zone.z);
+    const occupied = (zone: Zone) => resting.some((s) => s.x === zone.x && s.z === zone.z);
     const zone = this.nearest(
       this.zones.filter((z) => !occupied(z)),
       drag,
@@ -438,7 +689,6 @@ export class CardInteraction {
     let best: T | null = null;
     let bestDistance = Infinity;
     for (const item of items) {
-      if (item.id === drag.stackId) continue;
       const [hw, hh] = halfSize(item.turn);
       const dx = Math.abs(drag.x - item.x);
       const dz = Math.abs(drag.z - item.z);
@@ -450,6 +700,19 @@ export class CardInteraction {
       }
     }
     return best;
+  }
+
+  /** The top of the highest resting stack that a carried stack would overlap at x, z. */
+  private floorUnder(stackId: string, x: number, z: number, carried: readonly string[]): number {
+    const stack = this.table.state.stacks[stackId];
+    if (!stack) return 0;
+    const moved: StackState = { ...stack, x, z };
+    let floor = 0;
+    for (const other of Object.values(this.table.state.stacks)) {
+      if (carried.includes(other.id) || !footprintsOverlap(moved, other)) continue;
+      floor = Math.max(floor, this.cards.topY(other.id));
+    }
+    return floor;
   }
 
   private pick(e: PointerEvent): ReturnType<CardLayer['pick']> {
@@ -469,16 +732,17 @@ export class CardInteraction {
     this.raycaster.setFromCamera(this.pointer, this.camera);
   }
 
+  private distance(e: PointerEvent, x: number, y: number): number {
+    return Math.hypot(e.clientX - x, e.clientY - y);
+  }
+
+  private threshold(pointerType: string): number {
+    return pointerType === 'mouse' ? DRAG_THRESHOLD.mouse : DRAG_THRESHOLD.touch;
+  }
+
   private setHovered(stackId: string | null): void {
     if (stackId === this.hoveredId) return;
     this.hoveredId = stackId;
-    this.refreshHighlights();
-    this.emit();
-  }
-
-  private setSelected(stackId: string | null): void {
-    if (stackId === this.selectedId) return;
-    this.selectedId = stackId;
     this.refreshHighlights();
     this.emit();
   }
@@ -488,19 +752,34 @@ export class CardInteraction {
     this.canvas.style.cursor = drag ? 'grabbing' : this.hoveredId ? 'grab' : '';
     const target = drag?.target;
     if (target?.kind === 'zone') this.highlights.show('drop', target.zone, 0);
-    else this.showFrame('drop', target?.kind === 'stack' ? target.stackId : null);
-    this.showFrame('selected', drag ? null : this.selectedId);
-    this.showFrame('hover', drag || this.hoveredId === this.selectedId ? null : this.hoveredId);
+    else this.highlights.show('drop', ...this.frameOf(target?.kind === 'stack' ? target.stackId : null));
+    this.highlights.showSelected(drag ? [] : this.selectionIds.flatMap((id) => this.spot(id)));
+    const hover = drag || (this.hoveredId && this.selectionIds.includes(this.hoveredId)) ? null : this.hoveredId;
+    this.highlights.show('hover', ...this.frameOf(hover));
   }
 
-  private showFrame(kind: HighlightKind, stackId: string | null): void {
-    const stack = stackId ? this.table.state.stacks[stackId] : undefined;
-    this.highlights.show(kind, stack, stack ? this.cards.topY(stack.id) : 0);
+  private frameOf(stackId: string | null): [StackState | null, number] {
+    const stack = stackId ? (this.table.state.stacks[stackId] ?? null) : null;
+    return [stack, stack ? this.cards.topY(stack.id) : 0];
+  }
+
+  private spot(stackId: string): FrameSpot[] {
+    const stack = this.table.state.stacks[stackId];
+    return stack ? [{ x: stack.x, z: stack.z, turn: stack.turn, y: this.cards.topY(stackId) }] : [];
   }
 
   private emit(): void {
     for (const listener of this.listeners) listener();
   }
+}
+
+/** Keeps a stack's centre far enough in that the whole card stays on the table. */
+function clampToTable(x: number, z: number, turn: number): [number, number] {
+  const [hw, hh] = halfSize(turn);
+  return [
+    THREE.MathUtils.clamp(x, -TABLE_WIDTH / 2 + hw, TABLE_WIDTH / 2 - hw),
+    THREE.MathUtils.clamp(z, -TABLE_DEPTH / 2 + hh, TABLE_DEPTH / 2 - hh),
+  ];
 }
 
 /** Keeps positions tidy (to a tenth of a millimetre) so saved and shared states stay small. */

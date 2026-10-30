@@ -105,7 +105,29 @@ export function drawCardFront(face: CardFace): HTMLCanvasElement {
     ctx.fillText(SUIT_GLYPH[face.suit], x, y + 15);
   }
 
+  // Health, bottom right: a heart with the number on it
+  if (face.health) {
+    const x = W - 92;
+    const y = H - 88;
+    ctx.fillStyle = '#b3261e';
+    drawHeart(ctx, x, y, 40);
+    ctx.fillStyle = PAPER;
+    ctx.font = `bold 34px ${SERIF}`;
+    ctx.fillText(String(face.health), x, y - 2);
+  }
+
   return canvas;
+}
+
+/** A heart shape centred on x, y, about `size` across. */
+function drawHeart(ctx: CanvasRenderingContext2D, x: number, y: number, size: number): void {
+  const s = size / 2;
+  ctx.beginPath();
+  ctx.moveTo(x, y + s * 1.05);
+  ctx.bezierCurveTo(x - s * 1.5, y + s * 0.1, x - s * 1.25, y - s * 1.2, x, y - s * 0.55);
+  ctx.bezierCurveTo(x + s * 1.25, y - s * 1.2, x + s * 1.5, y + s * 0.1, x, y + s * 1.05);
+  ctx.closePath();
+  ctx.fill();
 }
 
 export function drawCardBack(label: string): HTMLCanvasElement {

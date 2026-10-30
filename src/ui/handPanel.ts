@@ -243,6 +243,7 @@ export class HandPanel implements HandDock {
     el?.classList.remove('dragging');
     if (press.dragging && !cancelled) {
       const index = this.slotAt(e.clientX, press.cardId);
+      this.table.checkpoint();
       this.table.dispatch({ type: 'reorderHand', handId: this.handId, cardId: press.cardId, index });
     } else if (!press.dragging && !cancelled) {
       // A tap pins the card as the one shown large, or unpins it.

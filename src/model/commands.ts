@@ -1,14 +1,22 @@
+import type { CardFace } from './cardSet';
 import { MAX_SEATS, seats } from './layout';
-import { planDeal, planGather, planShuffle, planSpread, touchingGroup } from './plans';
-import type { Random } from './setup';
-import { TableActionError, type Action, type IdGenerator, type Table } from './table';
+import { planDeal, planGather, planPile, planShuffle, planShuffleTogether, planSpread, touchingGroup } from './plans';
+import type { Random } from './random';
+import { newGame, type GameOptions } from './setup';
+import { TableActionError, buildTable, type Action, type IdGenerator, type Table } from './table';
 
 /** Pause between dealt cards, so the deal reads as cards going round the table. */
 const DEAL_STEP_MS = 70;
 
+/** One stack, or several selected together. */
+export type Targets = string | readonly string[];
+
 /**
  * The table commands behind the buttons and keys: flip, turn, shuffle, draw,
- * deal, spread and gather. Each one turns into plain actions on the table.
+ * deal, spread, gather, undo and redo, and a new game. Each one turns into
+ * plain actions on the table and counts as one step for Undo.
+ *
+ * Commands that take `Targets` work on one stack or on a whole selection.
  */
 export class TableCommands {
   private dealing: number | undefined;
@@ -21,51 +29,77 @@ export class TableCommands {
     private readonly random: Random = Math.random,
   ) {}
 
-  flip(stackId: string): void {
-    if (this.has(stackId)) this.table.dispatch({ type: 'flipStack', stackId });
+  /** Turns each stack over in place. */
+  flip(targets: Targets): void {
+    this.run(this.existing(targets).map((stackId): Action => ({ type: 'flipStack', stackId })));
   }
 
-  turn(stackId: string, by: number): void {
-    if (this.has(stackId)) this.table.dispatch({ type: 'turnStack', stackId, by });
+  /** Turns each stack by quarter turns: 1 is clockwise, -1 counter-clockwise. */
+  turn(targets: Targets, by: number): void {
+    this.run(this.existing(targets).map((stackId): Action => ({ type: 'turnStack', stackId, by })));
   }
 
-  shuffle(stackId: string): void {
-    const action = planShuffle(this.table.state, stackId, this.random);
-    if (action) this.table.dispatch(action);
+  /** Shuffles one stack, or piles several together and shuffles the pile. */
+  shuffle(targets: Targets): void {
+    const stackIds = this.existing(targets);
+    if (stackIds.length > 1) {
+      this.run(planShuffleTogether(this.table.state, stackIds, this.random));
+    } else if (stackIds[0]) {
+      const action = planShuffle(this.table.state, stackIds[0], this.random);
+      if (action) this.run([action]);
+    }
   }
 
-  /** Takes up to `count` cards off the top of a stack into the hand. */
-  draw(stackId: string, count = 1): void {
-    const stack = this.table.state.stacks[stackId];
-    if (!stack) return;
-    const n = Math.min(count, stack.cardIds.length);
-    if (n > 0) this.table.dispatch({ type: 'drawToHand', stackId, handId: this.handId, count: n });
+  /** Takes up to `count` cards off the top of each stack into the hand. */
+  draw(targets: Targets, count = 1): void {
+    const state = this.table.state;
+    const actions: Action[] = [];
+    for (const stackId of this.existing(targets)) {
+      const n = Math.min(count, state.stacks[stackId]?.cardIds.length ?? 0);
+      if (n > 0) actions.push({ type: 'drawToHand', stackId, handId: this.handId, count: n });
+    }
+    this.run(actions);
   }
 
+  /** Lays one stack out in a row. */
   spread(stackId: string): void {
     const action = planSpread(this.table.state, stackId, this.ids);
-    if (action) this.table.dispatch(action);
+    if (action) this.run([action]);
   }
 
-  gather(stackId: string): void {
-    for (const action of planGather(this.table.state, stackId)) this.table.dispatch(action);
+  /**
+   * One stack: piles up every card touching it, where it lies.
+   * Several: piles them all together where the lowest of them lies.
+   */
+  gather(targets: Targets): void {
+    const stackIds = this.existing(targets);
+    if (stackIds.length > 1) {
+      const action = planPile(this.table.state, stackIds);
+      if (action) this.run([action]);
+    } else if (stackIds[0]) {
+      this.run(planGather(this.table.state, stackIds[0]));
+    }
   }
 
-  /** Whether there is anything touching this stack to gather. */
-  canGather(stackId: string): boolean {
-    return touchingGroup(this.table.state, stackId).length > 1;
+  /** Whether Gather would do anything: several stacks, or one with something touching it. */
+  canGather(targets: Targets): boolean {
+    const stackIds = this.existing(targets);
+    if (stackIds.length > 1) return true;
+    return stackIds[0] ? touchingGroup(this.table.state, stackIds[0]).length > 1 : false;
   }
 
   /**
    * Deals `perSeat` cards from a stack to `players` seats round the table:
    * this screen's hand is seat 0, and other seats get face-down piles at their
-   * places. Cards go out one by one with a short pause; a second deal, or a
-   * move that makes the next card impossible, stops the one in progress.
+   * places. Cards go out one by one with a short pause; a second deal, an
+   * undo, or a move that makes the next card impossible stops the one in progress.
    */
   deal(stackId: string, players: number, perSeat: number): void {
     this.stopDealing();
     const seatList = seats(Math.min(MAX_SEATS, Math.max(2, players)));
     const queue: Action[] = planDeal(this.table.state, stackId, seatList, perSeat, this.handId, this.ids);
+    if (queue.length === 0) return;
+    this.table.checkpoint();
     const step = () => {
       const action = queue.shift();
       if (!action) {
@@ -91,7 +125,39 @@ export class TableCommands {
     this.dealing = undefined;
   }
 
-  private has(stackId: string): boolean {
-    return Boolean(this.table.state.stacks[stackId]);
+  undo(): void {
+    this.stopDealing();
+    this.table.undo();
+  }
+
+  redo(): void {
+    this.stopDealing();
+    this.table.redo();
+  }
+
+  /** Clears the table and sets up a fresh game. Undo brings the old table back. */
+  newGame(faces: readonly CardFace[], options: GameOptions): void {
+    this.stopDealing();
+    this.table.replace(buildTable(newGame(faces, options, this.random)));
+  }
+
+  /** Dispatches a list of actions as one undo step, stopping at the first that no longer fits the table. */
+  private run(actions: readonly Action[]): void {
+    if (actions.length === 0) return;
+    this.table.checkpoint();
+    for (const action of actions) {
+      try {
+        this.table.dispatch(action);
+      } catch (error) {
+        if (!(error instanceof TableActionError)) throw error;
+        return;
+      }
+    }
+  }
+
+  /** The stacks among `targets` that are still on the table. */
+  private existing(targets: Targets): string[] {
+    const list = typeof targets === 'string' ? [targets] : targets;
+    return list.filter((stackId) => Boolean(this.table.state.stacks[stackId]));
   }
 }

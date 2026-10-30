@@ -6,6 +6,13 @@ rules, players move the cards themselves.
 
 Built with [Three.js](https://threejs.org), TypeScript and [Vite](https://vite.dev).
 
+**Try it:** https://lapisberry.github.io/card-tabletop/
+
+The page opens on a sample game for four players: a character in front of each
+seat, the draw pile in the middle, your cards in your hand and a face-down hand
+pile at every other seat. Everyone plays on this one screen for now; online
+multiplayer comes later.
+
 ## Run it
 
 You need Node.js 22 or newer and [pnpm](https://pnpm.io) (the version is
@@ -34,22 +41,37 @@ pnpm build       # type-check and build the site into dist/
 | Q / E | Turn a quarter left / right |
 | S | Shuffle |
 | D, or 1 to 9 | Draw that many cards into your hand |
+| Shift + D | Open the deal options for the selected pile |
+| L | Spread the pile out in a row |
+| G | Gather: pile up the selected stacks, or one stack and the cards touching it |
 | Esc | Cancel a drag, or clear the selection |
 
-Keys act on the stack under the mouse, or on the selected stack. Hovering a
-face-up card shows it large at the side of the screen. Cards dropped partly
-over another stack rest on top of it.
+Keys act on the selected stacks, or on the stack under the mouse when nothing
+is selected. Hovering a face-up card shows it large at the side of the screen.
+Cards dropped partly over another stack rest on top of it.
 
-**Buttons for the selected stack**
+**Selecting several stacks**
+
+| Input | Does |
+| --- | --- |
+| Ctrl + click (Cmd + click on a Mac), or on touch hold and let go | Add a stack to the selection, or take it out |
+| Drag on empty felt, or on touch hold the felt and then drag | Draw a box round stacks to select them (Ctrl or Shift adds to the selection) |
+| Ctrl + A | Select everything on the table |
+| Drag one selected stack | Move all of them together; drop over your hand to take them all |
+
+With several stacks selected, Flip, Turn, Take (the top card of each), Shuffle
+(piles them up and shuffles) and Gather (piles them up) act on all of them.
+
+**Buttons for the selection**
 
 | Button | Does |
 | --- | --- |
 | ⟲ Flip ⟳ | Turn left, flip, turn right |
-| Draw (Take for one card) | Move the top card into your hand |
-| Shuffle | Shuffle the stack in place |
+| Draw (Take for one card or several stacks) | Move the top card into your hand |
+| Shuffle | Shuffle the stack in place, or pile up several and shuffle them together |
 | Deal… | Deal a number of cards to 2-7 players: yours go to your hand, the other seats get face-down piles round the table, turned to face them |
 | Spread | Lay the stack out in a row so every card shows |
-| Gather | Pile up this stack and every card touching it (shows only when something touches it) |
+| Gather | Pile up the selected stacks, or this stack and every card touching it |
 
 **Your hand**
 
@@ -60,6 +82,16 @@ The hand is a fan of cards along the bottom of the screen.
 | Drag a card up | Play it onto the table, face up, where you drop it (onto a pile works too) |
 | Drag a card sideways | Reorder the hand |
 | Hover, or tap | Show the card large; tap again to put it away |
+
+**Game**
+
+| Input | Does |
+| --- | --- |
+| Ctrl + Z, or ↶ | Undo the last change to the table |
+| Ctrl + Y or Ctrl + Shift + Z, or ↷ | Redo |
+| N, or New game | Pick the number of players (2-7) and cards each, then start a new shuffled game; undo brings the old table back |
+
+The table is saved in this browser, so a reload carries on with the same game.
 
 **View**
 
@@ -91,6 +123,14 @@ src/
   objects applied by a pure `reduce` function in `src/model/table.ts`. Actions
   carry their own ids, so sending them to other players is how online
   multiplayer can work later.
+- **Undo works in steps.** Each thing a player does (a drag, a button, a
+  deal) starts a step with `table.checkpoint()`, and undo puts back the table
+  as it was before that step. A new game is one step too. Undo is local to
+  this screen for now. `src/model/commands.ts` holds the commands that the
+  buttons and keys share.
+- **The table is saved in the browser** (`src/model/savedTable.ts`). A save is
+  only used if it still fits the card set, with every card in exactly one
+  place; otherwise a new game starts.
 - **Everything on the table is a stack.** A loose card is a stack of one and a
   deck is a tall stack, so moving, stacking and splitting all work the same way.
   Stack actions include `moveStack`, `splitStack`, `mergeStacks`,
@@ -125,11 +165,26 @@ one card design, with a list of the copies in the deck by rank and suit:
 
 `kind` is `action`, `equipment`, `character` or `role`. Copies use a rank
 (`2`-`10`, `J`, `Q`, `K`, `A`) and a suit (`H`, `D`, `C`, `S`); leave `copies`
-out for a single card with no rank, such as a role card. The sample deck uses
-its own generic Western names and text.
+out for a single card with no rank, such as a character. A card can also have
+`health` (1-9), shown as a heart on the card:
+
+```json
+{
+  "id": "old-hollis",
+  "name": "Old Hollis",
+  "kind": "character",
+  "health": 5,
+  "text": "Draw one card fewer at the start of each of your turns."
+}
+```
+
+A new game gives each seat one character, face up, and builds the draw pile
+from every card that is not a `character` or `role`. The sample set uses its own generic
+Western names, characters and text.
 
 ## Publishing
 
 `.github/workflows/pages.yml` publishes the site to GitHub Pages on every push
-to `main`. Turn it on once in the repository's **Settings > Pages** by setting
-**Source** to **GitHub Actions**.
+to `main`, at https://lapisberry.github.io/card-tabletop/. It was turned on
+once in the repository's **Settings > Pages** by setting **Source** to
+**GitHub Actions**.

@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { seats } from './layout';
-import { planDeal, planGather, planShuffle, planSpread, SPREAD_STEP, touchingGroup } from './plans';
+import {
+  planDeal,
+  planGather,
+  planPile,
+  planShuffle,
+  planShuffleTogether,
+  planSpread,
+  SPREAD_STEP,
+  touchingGroup,
+} from './plans';
 import { IdGenerator, emptyTable, reduce, type Action, type TableState } from './table';
 
 /** A face-down deck of `n` cards c1 (bottom) .. cn (top) at x, z, plus an empty hand "me". */
@@ -93,5 +102,40 @@ describe('planSpread and planGather', () => {
   it('does nothing for a lone card', () => {
     expect(planGather(deck(1), 'deck')).toEqual([]);
     expect(planSpread(deck(1), 'deck', new IdGenerator())).toBeNull();
+  });
+});
+
+describe('planPile and planShuffleTogether', () => {
+  /** Three single cards a, b, c put down in that order, far apart. */
+  function loose(): TableState {
+    let state = emptyTable;
+    ['a', 'b', 'c'].forEach((id, i) => {
+      state = reduce(state, {
+        type: 'createStack',
+        stack: { id: `s-${id}`, x: i * 20, z: 0, turn: 0, cardIds: [id] },
+        cards: [{ id, faceId: id, faceUp: true }],
+      });
+    });
+    return state;
+  }
+
+  it('piles the chosen stacks onto the one lying lowest, later ones on top', () => {
+    const state = loose();
+    const after = run(state, planPile(state, ['s-c', 's-a']));
+    expect(after.stacks['s-a']?.cardIds).toEqual(['a', 'c']);
+    expect(after.stacks['s-c']).toBeUndefined();
+    expect(after.stacks['s-b']).toBeDefined();
+    expect(planPile(state, ['s-a'])).toBeNull();
+  });
+
+  it('shuffles several stacks into one pile', () => {
+    const state = loose();
+    const after = run(
+      state,
+      planShuffleTogether(state, ['s-a', 's-b', 's-c'], () => 0),
+    );
+    expect(Object.keys(after.stacks)).toEqual(['s-a']);
+    expect([...(after.stacks['s-a']?.cardIds ?? [])].sort()).toEqual(['a', 'b', 'c']);
+    expect(after.stacks['s-a']?.cardIds).not.toEqual(['a', 'b', 'c']);
   });
 });

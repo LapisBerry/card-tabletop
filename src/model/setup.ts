@@ -1,60 +1,84 @@
 import type { CardFace } from './cardSet';
-import { DISCARD_ZONE, DRAW_ZONE, LOCAL_HAND_ID } from './layout';
-import { IdGenerator, type Action, type CardState } from './table';
+import { DRAW_ZONE, LOCAL_HAND_ID, MAX_SEATS, seats, type Seat } from './layout';
+import { planDeal } from './plans';
+import { shuffled, type Random } from './random';
+import { IdGenerator, buildTable, type Action, type CardState } from './table';
 
-export type Random = () => number;
-
-/** Fisher-Yates shuffle into a new array. */
-export function shuffled<T>(items: readonly T[], random: Random = Math.random): T[] {
-  const out = [...items];
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(random() * (i + 1));
-    [out[i], out[j]] = [out[j] as T, out[i] as T];
-  }
-  return out;
+export interface GameOptions {
+  /** Seats round the table, 2 to 7. This screen is seat 0. */
+  players: number;
+  /** Cards dealt to each seat to start. */
+  perSeat: number;
 }
 
-/** Cards the first player starts with in hand. */
-export const STARTING_HAND = 5;
+export const DEFAULT_GAME: GameOptions = { players: 4, perSeat: 4 };
+export const MIN_PLAYERS = 2;
+export const MAX_DEAL = 20;
+
+/** How far from a seat's place its character card lies (to the seat's left) and its hand pile (to its right). */
+const SEAT_SPREAD = 4.5;
 
 /**
- * Lays out a starting table: a shuffled face-down deck on the draw spot, one
- * face-up card on the discard spot, two equipment cards face up in front of
- * the first seat, and a starting hand.
+ * Sets up a new game: the play cards shuffled face down on the draw spot, a
+ * character card face up at each seat, and `perSeat` cards dealt round the
+ * table, into this screen's hand for seat 0 and into a face-down pile at each
+ * other seat. The discard spot starts empty.
  *
- * Returns the actions to dispatch, so the same setup can be sent to other players later.
+ * Returns the actions, so the same setup can be sent to other players later.
  */
-export function demoSetup(faces: readonly CardFace[], random: Random = Math.random): Action[] {
+export function newGame(
+  faces: readonly CardFace[],
+  options: GameOptions = DEFAULT_GAME,
+  random: Random = Math.random,
+): Action[] {
   const ids = new IdGenerator();
-  const deck = shuffled(faces, random);
+  const players = clamp(options.players, MIN_PLAYERS, MAX_SEATS);
+  const perSeat = clamp(options.perSeat, 0, MAX_DEAL);
+  const seatList = seats(players);
+  const characters = shuffled(
+    faces.filter((face) => face.kind === 'character'),
+    random,
+  );
+  const deck = shuffled(
+    faces.filter((face) => face.kind !== 'character' && face.kind !== 'role'),
+    random,
+  );
   const actions: Action[] = [{ type: 'createHand', handId: LOCAL_HAND_ID }];
 
-  const place = (x: number, z: number, turn: number, pile: CardFace[], faceUp: boolean) => {
-    if (pile.length === 0) return;
+  const place = (x: number, z: number, turn: number, pile: readonly CardFace[], faceUp: boolean): string | null => {
+    if (pile.length === 0) return null;
     const cards: CardState[] = pile.map((face) => ({ id: ids.make('card'), faceId: face.id, faceUp }));
-    actions.push({
-      type: 'createStack',
-      stack: { id: ids.make('stack'), x, z, turn, cardIds: cards.map((card) => card.id) },
-      cards,
-    });
+    const stackId = ids.make('stack');
+    actions.push({ type: 'createStack', stack: { id: stackId, x, z, turn, cardIds: cards.map((c) => c.id) }, cards });
+    return stackId;
   };
 
-  // Two equipment cards in play in front of the first seat, the way Bang! players lay out guns and horses.
-  const equipment: CardFace[] = [];
-  for (let i = 0; i < deck.length && equipment.length < 2; ) {
-    if (deck[i]?.kind === 'equipment') equipment.push(...deck.splice(i, 1));
-    else i++;
-  }
-  equipment.forEach((face, i) => place(-4 + i * 8, 20, 0, [face], true));
-
-  const discard = deck.splice(0, 1);
-  place(DISCARD_ZONE.x, DISCARD_ZONE.z, DISCARD_ZONE.turn, discard, true);
-
-  const deckStackIndex = actions.length;
-  place(DRAW_ZONE.x, DRAW_ZONE.z, DRAW_ZONE.turn, deck, false);
-  const deckAction = actions[deckStackIndex];
-  if (deckAction?.type === 'createStack' && deck.length >= STARTING_HAND) {
-    actions.push({ type: 'drawToHand', stackId: deckAction.stack.id, handId: LOCAL_HAND_ID, count: STARTING_HAND });
+  seatList.forEach((seat, i) => {
+    const face = characters[i];
+    if (face) place(...besideSeat(seat, -SEAT_SPREAD), seat.turn, [face], true);
+  });
+  const deckId = place(DRAW_ZONE.x, DRAW_ZONE.z, DRAW_ZONE.turn, deck, false);
+  if (deckId && perSeat > 0) {
+    const handSeats = seatList.map((seat) => {
+      const [x, z] = besideSeat(seat, SEAT_SPREAD);
+      return { ...seat, x, z };
+    });
+    actions.push(...planDeal(buildTable(actions), deckId, handSeats, perSeat, LOCAL_HAND_ID, ids));
   }
   return actions;
+}
+
+/** A spot `offset` along a seat's left-to-right line from its place; negative is to the seat's left. */
+function besideSeat(seat: Seat, offset: number): [number, number] {
+  // A seat's cards are turned by `turn` quarter turns, so its right hand points this way on the table.
+  const angle = (seat.turn * Math.PI) / 2;
+  return [round(seat.x + Math.cos(angle) * offset), round(seat.z + Math.sin(angle) * offset)];
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, Math.round(Number.isFinite(value) ? value : min)));
+}
+
+function round(value: number): number {
+  return Math.round(value * 100) / 100 || 0;
 }

@@ -43,9 +43,24 @@ describe('parseCardSet', () => {
     ).toThrow(CardSetError);
   });
 
-  it('loads the bundled sample deck', () => {
+  it('reads the health printed on character cards and rejects odd values', () => {
+    const base = { id: 't', name: 'T', backLabel: 'T' };
+    const set = parseCardSet({ ...base, cards: [{ id: 'kid', name: 'Kid', kind: 'character', health: 4 }] });
+    expect(set.faces[0]).toMatchObject({ id: 'kid', kind: 'character', health: 4 });
+    expect(() => parseCardSet({ ...base, cards: [{ id: 'kid', name: 'Kid', kind: 'character', health: 0 }] })).toThrow(
+      /health 0/,
+    );
+    expect(() =>
+      parseCardSet({ ...base, cards: [{ id: 'kid', name: 'Kid', kind: 'character', health: '4' }] }),
+    ).toThrow(/health "4"/);
+  });
+
+  it('loads the bundled sample set: 55 play cards and 8 characters', () => {
     const set = parseCardSet(sample);
-    expect(set.faces).toHaveLength(55);
-    expect(new Set(set.faces.map((face) => face.id)).size).toBe(55);
+    expect(set.faces).toHaveLength(63);
+    expect(new Set(set.faces.map((face) => face.id)).size).toBe(63);
+    const characters = set.faces.filter((face) => face.kind === 'character');
+    expect(characters).toHaveLength(8);
+    expect(characters.every((face) => face.health && !face.rank)).toBe(true);
   });
 });

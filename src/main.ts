@@ -1,13 +1,15 @@
 import * as THREE from 'three';
 import sampleDeck from './data/wild-west-sample.json';
-import { parseCardSet, type CardFace } from './model/cardSet';
+import { parseCardSet, type CardFace, type CardSet } from './model/cardSet';
 import { TableCommands } from './model/commands';
-import { LOCAL_HAND_ID, ZONES } from './model/layout';
-import { demoSetup } from './model/setup';
-import { IdGenerator, Table } from './model/table';
+import { LOCAL_HAND_ID, MAX_SEATS, ZONES } from './model/layout';
+import { parseSavedTable, serializeTable } from './model/savedTable';
+import { DEFAULT_GAME, MAX_DEAL, MIN_PLAYERS, newGame } from './model/setup';
+import { IdGenerator, Table, buildTable } from './model/table';
 import { ActionBar } from './ui/actionBar';
 import { CardPreview } from './ui/cardPreview';
 import { HandPanel } from './ui/handPanel';
+import { NumberPanel } from './ui/numberPanel';
 import { CameraRig } from './view/cameraRig';
 import { CardLayer } from './view/cardLayer';
 import { CardTextures } from './view/cardTextures';
@@ -31,7 +33,11 @@ function start(): void {
   const cardSet = parseCardSet(sampleDeck);
   const faces = new Map(cardSet.faces.map((face) => [face.id, face]));
   const table = new Table();
-  for (const action of demoSetup(cardSet.faces)) table.dispatch(action);
+  // Carry on with the game saved in this browser, or else start a new one.
+  const faceIds = new Set(faces.keys());
+  const saved = parseSavedTable(readSetting(TABLE_SETTING), cardSet.id, faceIds, LOCAL_HAND_ID);
+  table.load(saved ?? buildTable(newGame(cardSet.faces, DEFAULT_GAME)));
+  keepSaved(table, cardSet.id);
 
   const scene = createTableScene(anisotropy);
   const textures = new CardTextures(faces, cardSet.backLabel, anisotropy);
@@ -40,10 +46,12 @@ function start(): void {
   scene.add(createZoneMarks(ZONES), cards.group, highlights.group);
 
   const rig = new CameraRig(canvas);
-  // Ids for stacks made on this screen get their own prefix, so they never clash with the setup's.
-  const ids = new IdGenerator('local-');
+  // Stacks made on this screen get ids with a prefix of their own, so they never clash with ids
+  // in the setup or in a table saved by an earlier visit.
+  const ids = new IdGenerator(`${Math.random().toString(36).slice(2, 8)}-`);
   const commands = new TableCommands(table, ids, LOCAL_HAND_ID);
   const interaction = new CardInteraction(canvas, rig.camera, table, cards, highlights, ids, commands, ZONES);
+  interaction.setCameraLock(rig.controls);
 
   const handRoot = document.querySelector<HTMLElement>('#hand');
   const resize = () => {
@@ -67,11 +75,12 @@ function start(): void {
   });
 
   setUpHelp(rig);
+  setUpGameButtons(table, commands, cardSet);
   const hand = setUpCardPanels(table, interaction, commands, faces);
 
   // Handy for poking at the table from the browser console while developing.
   if (import.meta.env.DEV) {
-    Object.assign(window, { tabletop: { table, cards, textures, rig, scene, interaction, commands, hand } });
+    Object.assign(window, { tabletop: { table, cards, textures, rig, scene, renderer, interaction, commands, hand } });
   }
 }
 
@@ -103,6 +112,59 @@ function setUpHelp(rig: CameraRig): void {
 }
 
 const HELP_SETTING = 'card-tabletop:help';
+const TABLE_SETTING = 'card-tabletop:table';
+
+/** Saves the table in this browser shortly after each change, and when the page is closed. */
+function keepSaved(table: Table, setId: string): void {
+  let timer: number | undefined;
+  const save = () => {
+    window.clearTimeout(timer);
+    timer = undefined;
+    writeSetting(TABLE_SETTING, serializeTable(table.state, setId));
+  };
+  table.subscribe(() => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(save, 400);
+  });
+  window.addEventListener('pagehide', () => {
+    if (timer !== undefined) save();
+  });
+}
+
+/** Undo, Redo and New game in the toolbar. N opens the new game options. */
+function setUpGameButtons(table: Table, commands: TableCommands, cardSet: CardSet): void {
+  const undo = document.querySelector<HTMLButtonElement>('#undo');
+  const redo = document.querySelector<HTMLButtonElement>('#redo');
+  const newGameButton = document.querySelector<HTMLButtonElement>('#new-game');
+  const panelRoot = document.querySelector<HTMLElement>('#new-game-panel');
+
+  undo?.addEventListener('click', () => commands.undo());
+  redo?.addEventListener('click', () => commands.redo());
+  const refresh = () => {
+    undo?.toggleAttribute('disabled', !table.canUndo);
+    redo?.toggleAttribute('disabled', !table.canRedo);
+  };
+  table.subscribe(refresh);
+  refresh();
+
+  if (!panelRoot) return;
+  const panel = new NumberPanel(
+    panelRoot,
+    'card-tabletop:new-game',
+    {
+      players: { min: MIN_PLAYERS, max: MAX_SEATS, value: DEFAULT_GAME.players },
+      perSeat: { min: 0, max: MAX_DEAL, value: DEFAULT_GAME.perSeat },
+    },
+    (options) => commands.newGame(cardSet.faces, options),
+    (open) => newGameButton?.setAttribute('aria-expanded', String(open)),
+  );
+  newGameButton?.addEventListener('click', () => panel.toggle());
+  window.addEventListener('keydown', (event) => {
+    if (event.ctrlKey || event.metaKey || event.altKey || event.target instanceof HTMLInputElement) return;
+    if (event.key === 'n' || event.key === 'N') panel.toggle();
+    if (event.key === 'Escape') panel.close();
+  });
+}
 
 /** Browser storage can be missing or blocked (private windows, strict settings), so failures are ignored. */
 function readSetting(key: string): string | null {
