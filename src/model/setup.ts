@@ -1,4 +1,5 @@
 import type { CardFace } from './cardSet';
+import { DISCARD_ZONE, DRAW_ZONE, LOCAL_HAND_ID } from './layout';
 import { IdGenerator, type Action, type CardState } from './table';
 
 export type Random = () => number;
@@ -13,17 +14,20 @@ export function shuffled<T>(items: readonly T[], random: Random = Math.random): 
   return out;
 }
 
+/** Cards the first player starts with in hand. */
+export const STARTING_HAND = 5;
+
 /**
- * Lays out a starting table to show the cards off: a face-down draw pile, a
- * small face-up discard pile, and a row of face-up cards in front of the first
- * seat, with one equipment card turned sideways.
+ * Lays out a starting table: a shuffled face-down deck on the draw spot, one
+ * face-up card on the discard spot, two equipment cards face up in front of
+ * the first seat, and a starting hand.
  *
  * Returns the actions to dispatch, so the same setup can be sent to other players later.
  */
 export function demoSetup(faces: readonly CardFace[], random: Random = Math.random): Action[] {
   const ids = new IdGenerator();
   const deck = shuffled(faces, random);
-  const actions: Action[] = [];
+  const actions: Action[] = [{ type: 'createHand', handId: LOCAL_HAND_ID }];
 
   const place = (x: number, z: number, turn: number, pile: CardFace[], faceUp: boolean) => {
     if (pile.length === 0) return;
@@ -35,17 +39,22 @@ export function demoSetup(faces: readonly CardFace[], random: Random = Math.rand
     });
   };
 
-  // One equipment card is shown turned sideways, the way a played card is marked in Bang!.
-  const equipmentIndex = deck.findIndex((face) => face.kind === 'equipment');
-  const turned = equipmentIndex >= 0 ? deck.splice(equipmentIndex, 1) : [];
+  // Two equipment cards in play in front of the first seat, the way Bang! players lay out guns and horses.
+  const equipment: CardFace[] = [];
+  for (let i = 0; i < deck.length && equipment.length < 2; ) {
+    if (deck[i]?.kind === 'equipment') equipment.push(...deck.splice(i, 1));
+    else i++;
+  }
+  equipment.forEach((face, i) => place(-4 + i * 8, 20, 0, [face], true));
 
-  const row = deck.splice(0, 5);
-  const discard = deck.splice(0, 3);
+  const discard = deck.splice(0, 1);
+  place(DISCARD_ZONE.x, DISCARD_ZONE.z, DISCARD_ZONE.turn, discard, true);
 
-  row.forEach((face, i) => place(-16 + i * 8, 20, 0, [face], true));
-  place(26, 20, 1, turned, true);
-  place(5, -2, 0, discard, true);
-  place(-5, -2, 0, deck, false);
-
+  const deckStackIndex = actions.length;
+  place(DRAW_ZONE.x, DRAW_ZONE.z, DRAW_ZONE.turn, deck, false);
+  const deckAction = actions[deckStackIndex];
+  if (deckAction?.type === 'createStack' && deck.length >= STARTING_HAND) {
+    actions.push({ type: 'drawToHand', stackId: deckAction.stack.id, handId: LOCAL_HAND_ID, count: STARTING_HAND });
+  }
   return actions;
 }

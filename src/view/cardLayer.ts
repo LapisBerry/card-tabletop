@@ -1,8 +1,9 @@
 import * as THREE from 'three';
-import type { CardState, StackState, Table, TableState } from '../model/table';
+import { footprintsOverlap } from '../model/plans';
+import type { Action, CardState, StackState, Table, TableState } from '../model/table';
 import { CARD_MATERIAL, createCardGeometry } from './cardGeometry';
 import type { CardTextures } from './cardTextures';
-import { CARD_THICKNESS, CARD_WIDTH } from './dimensions';
+import { CARD_THICKNESS, CARD_WIDTH } from '../model/dimensions';
 
 /** Gap between stacked cards, so their faces never fight for the same pixels. */
 const STACK_GAP = 0.004;
@@ -42,6 +43,8 @@ export class CardLayer {
   private readonly unsubscribe: () => void;
   private state: TableState;
   private lift: Lift | null = null;
+  /** How high each stack's bottom card rests: on the felt, or on top of stacks put down before it that it overlaps. */
+  private readonly elevation = new Map<string, number>();
 
   constructor(
     table: Table,
@@ -50,8 +53,8 @@ export class CardLayer {
     this.group.name = 'cards';
     this.backMaterial = new THREE.MeshStandardMaterial({ map: textures.back, roughness: 0.6 });
     this.state = table.state;
-    this.sync(table.state, true);
-    this.unsubscribe = table.subscribe((state) => this.sync(state, false));
+    this.sync(table.state, null);
+    this.unsubscribe = table.subscribe((state, action) => this.sync(state, action));
   }
 
   /** Moves every card a step toward where it belongs. Call once per frame. */
@@ -67,8 +70,24 @@ export class CardLayer {
   setLift(lift: Lift | null): void {
     const previous = this.lift?.stackId;
     this.lift = lift;
-    if (previous && previous !== lift?.stackId) this.placeStack(previous, false);
-    if (lift) this.placeStack(lift.stackId, false);
+    if (previous !== lift?.stackId) {
+      // Cards resting on a stack that is picked up (or put back) settle to their new height.
+      this.layout(false);
+    } else if (lift) {
+      this.placeStack(lift.stackId, false);
+    }
+  }
+
+  /** Height of a stack's bottom card as drawn: on the felt, or on whatever it overlaps. */
+  baseY(stackId: string): number {
+    return this.elevation.get(stackId) ?? 0;
+  }
+
+  /** Height of the top of a stack as drawn: where a card dropped on it would rest. */
+  topY(stackId: string): number {
+    const stack = this.state.stacks[stackId];
+    if (!stack) return 0;
+    return (this.elevation.get(stackId) ?? 0) + stackTopY(stack.cardIds.length);
   }
 
   /** The card under a ray, topmost first, skipping the carried stack. */
@@ -92,11 +111,13 @@ export class CardLayer {
     this.edgeMaterial.dispose();
   }
 
-  private sync(state: TableState, snap: boolean): void {
+  private sync(state: TableState, action: Action | null): void {
+    const snap = action === null;
     this.state = state;
     this.stackOfCard.clear();
     if (this.lift && !state.stacks[this.lift.stackId]) this.lift = null;
     const seen = new Set<string>();
+    const fresh: CardView[] = [];
     for (const stack of Object.values(state.stacks)) {
       for (const cardId of stack.cardIds) {
         const card = state.cards[cardId];
@@ -108,12 +129,10 @@ export class CardLayer {
           view = new CardView(card.id, this.geometry, this.backMaterial, this.edgeMaterial);
           this.views.set(cardId, view);
           this.group.add(view.mesh);
-          view.show(card, this.textures);
-          this.placeCard(view, stack, stack.cardIds.indexOf(cardId), true);
+          fresh.push(view);
         }
         view.show(card, this.textures);
       }
-      this.placeStack(stack.id, snap);
     }
     for (const [cardId, view] of this.views) {
       if (seen.has(cardId)) continue;
@@ -121,6 +140,38 @@ export class CardLayer {
       view.dispose(this.textures);
       this.views.delete(cardId);
     }
+    this.layout(snap);
+    // Cards that just arrived (dealt in, or played from a hand) appear in place rather than flying in from the origin.
+    for (const view of fresh) view.snap();
+    if (action?.type === 'shuffleStack') this.riffle(action.stackId);
+  }
+
+  /** Works out every stack's resting height, then sends each card toward its place. */
+  private layout(snap: boolean): void {
+    this.elevation.clear();
+    const placed: StackState[] = [];
+    for (const stack of Object.values(this.state.stacks)) {
+      let base = 0;
+      if (stack.id !== this.lift?.stackId) {
+        for (const below of placed) {
+          if (footprintsOverlap(below, stack)) {
+            base = Math.max(base, (this.elevation.get(below.id) ?? 0) + stackTopY(below.cardIds.length));
+          }
+        }
+        placed.push(stack);
+      }
+      this.elevation.set(stack.id, base);
+      this.placeStack(stack.id, snap);
+    }
+  }
+
+  /** Knocks a shuffled stack's cards a little out of line; they glide back into a neat pile. */
+  private riffle(stackId: string): void {
+    const stack = this.state.stacks[stackId];
+    stack?.cardIds.forEach((cardId, i) => {
+      const side = i % 2 === 0 ? 1 : -1;
+      this.views.get(cardId)?.nudge(side * (1.5 + Math.random() * 2.5), (Math.random() - 0.5) * 2);
+    });
   }
 
   private placeStack(stackId: string, snap: boolean): void {
@@ -136,7 +187,7 @@ export class CardLayer {
     const lifted = this.lift?.stackId === stack.id ? this.lift : null;
     const x = lifted ? lifted.x : stack.x;
     const z = lifted ? lifted.z : stack.z;
-    const base = lifted ? lifted.y : 0;
+    const base = lifted ? lifted.y : (this.elevation.get(stack.id) ?? 0);
     view.setTarget(x, base + CARD_THICKNESS / 2 + index * CARD_PITCH + 0.002, z, stack.turn, snap);
   }
 }
@@ -188,11 +239,20 @@ class CardView {
     this.targetPosition.set(x, y, z);
     const euler = new THREE.Euler(0, (-turn * Math.PI) / 2, this.faceDown ? Math.PI : 0, 'YZX');
     this.targetQuaternion.setFromEuler(euler);
-    if (snap) {
-      this.base.copy(this.targetPosition);
-      this.mesh.quaternion.copy(this.targetQuaternion);
-      this.mesh.position.copy(this.base);
-    }
+    if (snap) this.snap();
+  }
+
+  /** Jumps straight to the target, with no glide. */
+  snap(): void {
+    this.base.copy(this.targetPosition);
+    this.mesh.quaternion.copy(this.targetQuaternion);
+    this.mesh.position.copy(this.base);
+  }
+
+  /** Pushes the card sideways from where it is; it glides back on its own. */
+  nudge(dx: number, dz: number): void {
+    this.base.x += dx;
+    this.base.z += dz;
   }
 
   glide(t: number): void {

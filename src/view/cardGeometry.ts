@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { CARD_CORNER_RADIUS, CARD_HEIGHT, CARD_THICKNESS, CARD_WIDTH } from './dimensions';
+import { CARD_CORNER_RADIUS, CARD_HEIGHT, CARD_THICKNESS, CARD_WIDTH } from '../model/dimensions';
+import { roundedRect } from './shapes';
 
 /** Material slots of the card geometry. */
 export const CARD_MATERIAL = { back: 0, front: 1, edge: 2 } as const;
@@ -13,16 +14,7 @@ export function createCardGeometry(): THREE.BufferGeometry {
   const w = CARD_WIDTH;
   const h = CARD_HEIGHT;
   const r = CARD_CORNER_RADIUS;
-  const shape = new THREE.Shape();
-  shape.moveTo(-w / 2 + r, -h / 2);
-  shape.lineTo(w / 2 - r, -h / 2);
-  shape.quadraticCurveTo(w / 2, -h / 2, w / 2, -h / 2 + r);
-  shape.lineTo(w / 2, h / 2 - r);
-  shape.quadraticCurveTo(w / 2, h / 2, w / 2 - r, h / 2);
-  shape.lineTo(-w / 2 + r, h / 2);
-  shape.quadraticCurveTo(-w / 2, h / 2, -w / 2, h / 2 - r);
-  shape.lineTo(-w / 2, -h / 2 + r);
-  shape.quadraticCurveTo(-w / 2, -h / 2, -w / 2 + r, -h / 2);
+  const shape = roundedRect(w / 2, h / 2, r);
 
   const geometry = new THREE.ExtrudeGeometry(shape, { depth: CARD_THICKNESS, bevelEnabled: false, curveSegments: 4 });
 
