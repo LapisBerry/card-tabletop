@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { TABLE_DEPTH, TABLE_WIDTH } from './dimensions';
+import { TABLE_DEPTH, TABLE_WIDTH } from '../model/dimensions';
 
 const RIM = 5;
 const RIM_HEIGHT = 0.8;

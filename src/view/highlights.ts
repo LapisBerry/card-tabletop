@@ -1,7 +1,5 @@
 import * as THREE from 'three';
-import type { StackState } from '../model/table';
-import { stackTopY } from './cardLayer';
-import { CARD_CORNER_RADIUS, CARD_HEIGHT, CARD_WIDTH } from './dimensions';
+import { cardFrameGeometry } from './shapes';
 
 export type HighlightKind = 'hover' | 'selected' | 'drop';
 
@@ -21,7 +19,7 @@ export class Highlights {
     const make = (kind: HighlightKind) => {
       const style = STYLE[kind];
       const mesh = new THREE.Mesh(
-        frameGeometry(style.gap, style.width),
+        cardFrameGeometry(style.gap, style.width),
         new THREE.MeshBasicMaterial({
           color: style.color,
           transparent: true,
@@ -39,43 +37,15 @@ export class Highlights {
     this.frames = { hover: make('hover'), selected: make('selected'), drop: make('drop') };
   }
 
-  /** Puts a frame around a stack, or hides it with `null`. */
-  show(kind: HighlightKind, stack: StackState | null | undefined): void {
+  /** Puts a frame around a stack at height `y` (its top), or hides it with `null`. */
+  show(kind: HighlightKind, stack: { x: number; z: number; turn: number } | null | undefined, y = 0): void {
     const frame = this.frames[kind];
     if (!stack) {
       frame.visible = false;
       return;
     }
     frame.visible = true;
-    frame.position.set(stack.x, stackTopY(stack.cardIds.length) + 0.01, stack.z);
+    frame.position.set(stack.x, y + 0.01, stack.z);
     frame.rotation.set(0, (-stack.turn * Math.PI) / 2, 0);
   }
-}
-
-/** A flat rounded frame lying on the table, `gap` outside the card edge and `width` wide. */
-function frameGeometry(gap: number, width: number): THREE.BufferGeometry {
-  const outer = roundedRect(
-    CARD_WIDTH / 2 + gap + width,
-    CARD_HEIGHT / 2 + gap + width,
-    CARD_CORNER_RADIUS + gap + width,
-  );
-  const inner = roundedRect(CARD_WIDTH / 2 + gap, CARD_HEIGHT / 2 + gap, CARD_CORNER_RADIUS + gap);
-  outer.holes.push(inner);
-  const geometry = new THREE.ShapeGeometry(outer, 6);
-  geometry.rotateX(-Math.PI / 2);
-  return geometry;
-}
-
-function roundedRect(hw: number, hh: number, r: number): THREE.Shape {
-  const shape = new THREE.Shape();
-  shape.moveTo(-hw + r, -hh);
-  shape.lineTo(hw - r, -hh);
-  shape.quadraticCurveTo(hw, -hh, hw, -hh + r);
-  shape.lineTo(hw, hh - r);
-  shape.quadraticCurveTo(hw, hh, hw - r, hh);
-  shape.lineTo(-hw + r, hh);
-  shape.quadraticCurveTo(-hw, hh, -hw, hh - r);
-  shape.lineTo(-hw, -hh + r);
-  shape.quadraticCurveTo(-hw, -hh, -hw + r, -hh);
-  return shape;
 }

@@ -3,7 +3,7 @@
  * The canvas has the card's proportions and is mapped onto the whole card.
  */
 import type { CardFace, CardKind, Suit } from '../model/cardSet';
-import { CARD_HEIGHT, CARD_WIDTH } from './dimensions';
+import { CARD_HEIGHT, CARD_WIDTH } from '../model/dimensions';
 
 export const ART_WIDTH = 512;
 export const ART_HEIGHT = Math.round((ART_WIDTH * CARD_HEIGHT) / CARD_WIDTH);

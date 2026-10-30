@@ -4,6 +4,10 @@
   --text: #f3ead8;
   --muted: #bfb19a;
   --accent: #d8b26a;
+  /* The hand along the bottom of the screen; the panels above it make room for it. */
+  --hand-card-w: clamp(64px, 9vw, 104px);
+  --hand-card-h: calc(var(--hand-card-w) * 716 / 512);
+  --hand-h: calc(var(--hand-card-h) + 24px);
   font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
   color: var(--text);
 }
@@ -24,6 +28,10 @@ body {
   -webkit-touch-callout: none;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 #table {
   position: fixed;
   inset: 0;
@@ -38,6 +46,8 @@ body {
 .help,
 .toolbar button,
 .actions,
+.deal,
+.hand-hint,
 .error {
   background: var(--panel);
   border: 1px solid var(--panel-border);
@@ -66,19 +76,16 @@ body {
   color: var(--muted);
 }
 
+/* The controls list, under the title */
 .help {
   position: fixed;
   left: 16px;
-  bottom: 16px;
+  top: 84px;
   max-width: min(320px, calc(100vw - 32px));
-  max-height: calc(100vh - 180px);
+  max-height: calc(100vh - 84px - var(--hand-h) - 16px);
   overflow-y: auto;
   padding: 10px 14px;
   font-size: 12px;
-}
-
-.help[hidden] {
-  display: none;
 }
 
 .help h2 {
@@ -91,7 +98,7 @@ body {
 
 .help dl {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: max-content 1fr;
   gap: 3px 12px;
   margin: 0;
 }
@@ -110,13 +117,13 @@ body {
   margin-top: 12px;
 }
 
-/* Large picture of the card under the pointer */
+/* Large picture of the card under the pointer, in the space above the hand */
 .preview {
   position: fixed;
   right: 16px;
-  top: 50%;
+  top: calc((100vh - var(--hand-h)) / 2);
   transform: translateY(-50%);
-  width: min(260px, 28vw);
+  width: min(260px, 28vw, calc((100vh - var(--hand-h) - 96px) * 512 / 716));
   pointer-events: none;
   filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.55));
 }
@@ -126,10 +133,6 @@ body {
   left: 16px;
 }
 
-.preview[hidden] {
-  display: none;
-}
-
 .preview canvas {
   display: block;
   width: 100%;
@@ -137,20 +140,32 @@ body {
   border-radius: 6%/4.3%;
 }
 
-/* Buttons for the selected stack */
-.actions {
+/* Deal options and the buttons for the selected stack, stacked just above the hand */
+.dock {
   position: fixed;
   left: 50%;
-  bottom: 16px;
+  bottom: calc(var(--hand-h) + 8px);
   transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100vw - 16px);
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.dock > * {
+  pointer-events: auto;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
   gap: 6px;
   padding: 6px;
-}
-
-.actions[hidden] {
-  display: none;
 }
 
 .actions .count {
@@ -160,7 +175,8 @@ body {
   white-space: nowrap;
 }
 
-.actions button {
+.actions button,
+.deal button {
   min-width: 44px;
   min-height: 40px;
   padding: 6px 12px;
@@ -173,13 +189,172 @@ body {
   cursor: pointer;
 }
 
-.actions button:hover {
+.actions button:hover,
+.deal button:hover,
+.toolbar button:hover {
   border-color: var(--accent);
 }
 
-.actions button:focus-visible {
+.actions button:focus-visible,
+.deal button:focus-visible,
+.toolbar button:focus-visible,
+.hand-card:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.actions button[aria-expanded='true'] {
+  border-color: var(--accent);
+  background: rgba(216, 178, 106, 0.18);
+}
+
+.deal {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 10px 18px;
+  max-width: 460px;
+  padding: 12px 14px;
+}
+
+.deal .stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.deal .stepper span {
+  margin-right: 4px;
+  color: var(--muted);
+}
+
+.deal .stepper button {
+  min-width: 40px;
+  padding: 6px;
+}
+
+.deal output {
+  min-width: 2ch;
+  text-align: center;
+  font-size: 17px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.deal button.primary {
+  color: #231c12;
+  font-weight: 600;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.deal button.primary:hover {
+  background: #e6c486;
+}
+
+.deal .note {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* The player's hand: a fan of cards along the bottom edge */
+.hand {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: min(920px, calc(100vw - 16px));
+  height: var(--hand-h);
+  pointer-events: none;
+}
+
+/* A soft glow that says "drop here" while a card is carried over the hand */
+.hand::before {
+  content: '';
+  position: absolute;
+  inset: -12px -24px 0;
+  border-radius: 50% 50% 0 0 / 40% 40% 0 0;
+  background: radial-gradient(ellipse at 50% 100%, rgba(216, 178, 106, 0.42), rgba(216, 178, 106, 0) 70%);
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+.hand.drop::before {
+  opacity: 1;
+}
+
+.hand-cards {
+  position: absolute;
+  inset: 12px 0 0;
+}
+
+.hand-hint {
+  display: none;
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 16px);
+  margin: 0;
+  padding: 10px 16px;
+  border-style: dashed;
+  border-color: rgba(255, 240, 210, 0.3);
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.hand.empty .hand-hint {
+  display: block;
+}
+
+.hand-card {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--hand-card-w);
+  aspect-ratio: 512 / 716;
+  padding: 0;
+  border: 0;
+  border-radius: 6% / 4.3%;
+  overflow: hidden;
+  background: #f1e6cc;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 6px 14px rgba(0, 0, 0, 0.45);
+  /* Turn around a point below the card, so the hand fans like one held in fingers. */
+  transform-origin: 50% 140%;
+  transition:
+    transform 180ms ease,
+    opacity 180ms ease,
+    box-shadow 180ms ease;
+  cursor: grab;
+  touch-action: none;
+  pointer-events: auto;
+}
+
+.hand-card canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.hand-card.focused {
+  box-shadow:
+    0 0 0 2px var(--accent),
+    0 10px 22px rgba(0, 0, 0, 0.55);
+}
+
+.hand-card.dragging {
+  transition: box-shadow 180ms ease;
+  cursor: grabbing;
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.6);
 }
 
 .toolbar {
@@ -198,15 +373,6 @@ body {
   cursor: pointer;
 }
 
-.toolbar button:hover {
-  border-color: var(--accent);
-}
-
-.toolbar button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
 .error {
   position: fixed;
   top: 50%;
@@ -217,30 +383,60 @@ body {
   margin: 0;
 }
 
-@media (max-width: 600px) {
+/* Short screens, such as a phone on its side: a smaller hand leaves room for the table. */
+@media (max-height: 520px) {
+  :root {
+    --hand-card-w: 54px;
+  }
+
   .help {
-    font-size: 12px;
-    bottom: 120px;
+    top: 72px;
+    max-height: calc(100vh - 72px - var(--hand-h) - 16px);
+  }
+}
+
+@media (max-width: 600px) {
+  .badge {
+    top: 8px;
+    left: 8px;
+    padding: 8px 12px;
   }
 
   .badge p {
     display: none;
   }
 
-  /* Buttons move to the bottom so they do not crowd the title. */
   .toolbar {
-    top: auto;
-    bottom: 16px;
+    top: 8px;
+    right: 8px;
+    gap: 6px;
   }
 
-  /* The card buttons sit above the view buttons, and the preview goes top right. */
-  .actions {
-    bottom: 68px;
+  .help {
+    left: 8px;
+    top: 60px;
+    max-height: calc(100vh - 60px - var(--hand-h) - 16px);
   }
 
-  .preview {
-    top: 16px;
+  /* The preview sits under the view buttons, top right. */
+  .preview,
+  .preview.left {
+    top: 60px;
+    right: 8px;
+    left: auto;
     transform: none;
     width: 34vw;
+  }
+
+  .actions button {
+    min-width: 40px;
+    padding: 6px 9px;
+    font-size: 14px;
+  }
+
+  .actions .count {
+    flex-basis: 100%;
+    text-align: center;
+    padding: 0;
   }
 }
