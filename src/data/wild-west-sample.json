@@ -156,6 +156,62 @@
       "kind": "equipment",
       "text": "Range 5.",
       "copies": ["KH"]
+    },
+    {
+      "id": "mae-hartley",
+      "name": "Mae Hartley",
+      "kind": "character",
+      "health": 4,
+      "text": "When you play Whiskey, another player of your choice also gains 1 health."
+    },
+    {
+      "id": "silas-crane",
+      "name": "Silas Crane",
+      "kind": "character",
+      "health": 4,
+      "text": "At the end of your turn, if you played no cards, draw 1 card."
+    },
+    {
+      "id": "tomasa-reyes",
+      "name": "Tomasa Reyes",
+      "kind": "character",
+      "health": 4,
+      "text": "You may play Dodge for a player sitting next to you."
+    },
+    {
+      "id": "old-hollis",
+      "name": "Old Hollis",
+      "kind": "character",
+      "health": 5,
+      "text": "Draw one card fewer at the start of each of your turns."
+    },
+    {
+      "id": "wren-calloway",
+      "name": "Wren Calloway",
+      "kind": "character",
+      "health": 3,
+      "text": "You may put equipment into play face down. Turn it face up the first time you use it."
+    },
+    {
+      "id": "ezra-flint",
+      "name": "Ezra Flint",
+      "kind": "character",
+      "health": 3,
+      "text": "Players holding fewer cards than you cannot Dodge your Shots."
+    },
+    {
+      "id": "clem-shaw",
+      "name": "Clem Shaw",
+      "kind": "character",
+      "health": 4,
+      "text": "Once per turn, you may swap a card in your hand with a face-up equipment card in front of you."
+    },
+    {
+      "id": "the-parson",
+      "name": "The Parson",
+      "kind": "character",
+      "health": 4,
+      "text": "Whenever any player gains health from Whiskey, you may draw 1 card."
     }
   ]
 }

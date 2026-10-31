@@ -9,43 +9,76 @@ const STYLE: Record<HighlightKind, { color: string; opacity: number; gap: number
   drop: { color: '#7fe0a8', opacity: 0.95, gap: 0.2, width: 0.45 },
 };
 
-/** Glowing frames drawn around a stack: one for hover, one for the selection, one for where a card will drop. */
+/** Where to draw a frame: a stack's spot and turn, and the height of its top. */
+export interface FrameSpot {
+  x: number;
+  z: number;
+  turn: number;
+  y: number;
+}
+
+/**
+ * Glowing frames drawn around stacks: one for the stack under the pointer, one
+ * for where carried cards will drop, and one for each selected stack.
+ */
 export class Highlights {
   readonly group = new THREE.Group();
-  private readonly frames: Record<HighlightKind, THREE.Mesh>;
+  private readonly hover: THREE.Mesh;
+  private readonly drop: THREE.Mesh;
+  private readonly selectedGeometry: THREE.BufferGeometry;
+  private readonly selectedMaterial: THREE.Material;
+  /** Frames for selected stacks, made as needed and hidden when not in use. */
+  private readonly selectedFrames: THREE.Mesh[] = [];
 
   constructor() {
     this.group.name = 'highlights';
-    const make = (kind: HighlightKind) => {
-      const style = STYLE[kind];
-      const mesh = new THREE.Mesh(
-        cardFrameGeometry(style.gap, style.width),
-        new THREE.MeshBasicMaterial({
-          color: style.color,
-          transparent: true,
-          opacity: style.opacity,
-          depthWrite: false,
-          toneMapped: false,
-        }),
-      );
-      mesh.name = `highlight-${kind}`;
-      mesh.visible = false;
-      mesh.renderOrder = 10;
-      this.group.add(mesh);
-      return mesh;
-    };
-    this.frames = { hover: make('hover'), selected: make('selected'), drop: make('drop') };
+    this.hover = this.make('hover');
+    this.drop = this.make('drop');
+    this.selectedGeometry = cardFrameGeometry(STYLE.selected.gap, STYLE.selected.width);
+    this.selectedMaterial = material('selected');
   }
 
-  /** Puts a frame around a stack at height `y` (its top), or hides it with `null`. */
-  show(kind: HighlightKind, stack: { x: number; z: number; turn: number } | null | undefined, y = 0): void {
-    const frame = this.frames[kind];
-    if (!stack) {
-      frame.visible = false;
-      return;
-    }
-    frame.visible = true;
-    frame.position.set(stack.x, y + 0.01, stack.z);
-    frame.rotation.set(0, (-stack.turn * Math.PI) / 2, 0);
+  /** Puts the hover or drop frame around a stack at height `y` (its top), or hides it with `null`. */
+  show(kind: 'hover' | 'drop', stack: { x: number; z: number; turn: number } | null | undefined, y = 0): void {
+    place(kind === 'hover' ? this.hover : this.drop, stack ? { ...stack, y } : null);
   }
+
+  /** Frames every selected stack; stacks left out lose their frame. */
+  showSelected(spots: readonly FrameSpot[]): void {
+    while (this.selectedFrames.length < spots.length) {
+      const mesh = new THREE.Mesh(this.selectedGeometry, this.selectedMaterial);
+      mesh.name = 'highlight-selected';
+      mesh.renderOrder = 10;
+      this.group.add(mesh);
+      this.selectedFrames.push(mesh);
+    }
+    this.selectedFrames.forEach((frame, i) => place(frame, spots[i] ?? null));
+  }
+
+  private make(kind: HighlightKind): THREE.Mesh {
+    const style = STYLE[kind];
+    const mesh = new THREE.Mesh(cardFrameGeometry(style.gap, style.width), material(kind));
+    mesh.name = `highlight-${kind}`;
+    mesh.visible = false;
+    mesh.renderOrder = 10;
+    this.group.add(mesh);
+    return mesh;
+  }
+}
+
+function material(kind: HighlightKind): THREE.Material {
+  return new THREE.MeshBasicMaterial({
+    color: STYLE[kind].color,
+    transparent: true,
+    opacity: STYLE[kind].opacity,
+    depthWrite: false,
+    toneMapped: false,
+  });
+}
+
+function place(frame: THREE.Mesh, spot: FrameSpot | null): void {
+  frame.visible = Boolean(spot);
+  if (!spot) return;
+  frame.position.set(spot.x, spot.y + 0.01, spot.z);
+  frame.rotation.set(0, (-spot.turn * Math.PI) / 2, 0);
 }

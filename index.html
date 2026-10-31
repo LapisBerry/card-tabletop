@@ -12,7 +12,7 @@
 
     <header class="badge">
       <h1>Card Tabletop</h1>
-      <p>Prototype · deck, hand and piles</p>
+      <p>Playable demo · free table</p>
     </header>
 
     <aside class="help" id="help" aria-label="Controls">
@@ -22,10 +22,17 @@
         <dt>Shift + drag</dt><dd>Move the whole pile (touch: hold, then drag)</dd>
         <dt>Drop on a pile</dt><dd>Put it on top; marked spots snap</dd>
         <dt>Double-click, F</dt><dd>Flip</dd>
-        <dt>Q / E</dt><dd>Turn left / right</dd>
-        <dt>S</dt><dd>Shuffle</dd>
+        <dt>Q / E, S</dt><dd>Turn left / right, shuffle</dd>
         <dt>D, or 1 to 9</dt><dd>Draw into your hand</dd>
-        <dt>Esc</dt><dd>Cancel a drag</dd>
+        <dt>Shift + D</dt><dd>Deal</dd>
+        <dt>L / G</dt><dd>Spread / gather</dd>
+        <dt>Esc</dt><dd>Cancel a drag, or clear the selection</dd>
+      </dl>
+      <h2>Select several</h2>
+      <dl>
+        <dt>Ctrl + click</dt><dd>Add or remove a pile (touch: hold, then let go)</dd>
+        <dt>Drag on the table</dt><dd>Draw a box round piles (touch: hold, then drag)</dd>
+        <dt>Ctrl + A</dt><dd>Select everything; drag one to move them all</dd>
       </dl>
       <h2>Hand</h2>
       <dl>
@@ -33,21 +40,40 @@
         <dt>Drag sideways</dt><dd>Reorder</dd>
         <dt>Drop on the hand</dt><dd>Take cards into your hand</dd>
       </dl>
-      <h2>View</h2>
+      <h2>Game and view</h2>
       <dl>
-        <dt>Right-drag</dt><dd>Move the view</dd>
-        <dt>Middle-drag</dt><dd>Tilt and turn (or Shift + right-drag)</dd>
-        <dt>Wheel</dt><dd>Zoom</dd>
-        <dt>Arrow keys</dt><dd>Move the view</dd>
+        <dt>Ctrl + Z / Ctrl + Y</dt><dd>Undo / redo</dd>
+        <dt>N</dt><dd>New game</dd>
+        <dt>Right-drag, arrows</dt><dd>Move the view</dd>
+        <dt>Middle-drag, wheel</dt><dd>Tilt and turn, zoom</dd>
         <dt>Touch</dt><dd>One finger moves, two zoom and turn</dd>
-        <dt>H</dt><dd>Reset the view</dd>
-        <dt>?</dt><dd>Show or hide this panel</dd>
+        <dt>H / ?</dt><dd>Reset the view / show this panel</dd>
       </dl>
     </aside>
 
     <div class="toolbar">
-      <button type="button" id="reset-view">Reset view</button>
+      <button type="button" id="undo" class="icon" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>
+      <button type="button" id="redo" class="icon" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled>↷</button>
+      <button type="button" id="new-game" title="New game (N)" aria-controls="new-game-panel" aria-expanded="false">New game</button>
+      <button type="button" id="reset-view" title="Reset the view (H)">Reset view</button>
       <button type="button" id="toggle-help" aria-controls="help" aria-expanded="true">Controls</button>
+    </div>
+
+    <div class="panel new-game" id="new-game-panel" role="group" aria-label="New game" hidden>
+      <div class="stepper">
+        <span>Players</span>
+        <button type="button" data-step="players-" aria-label="Fewer players">−</button>
+        <output data-value="players">4</output>
+        <button type="button" data-step="players+" aria-label="More players">+</button>
+      </div>
+      <div class="stepper">
+        <span>Cards each</span>
+        <button type="button" data-step="perSeat-" aria-label="Fewer cards">−</button>
+        <output data-value="perSeat">4</output>
+        <button type="button" data-step="perSeat+" aria-label="More cards">+</button>
+      </div>
+      <button type="button" class="primary" data-confirm>Start</button>
+      <p class="note">Shuffles everything and sets up a new table: a character for each seat, your cards in your hand, and a face-down hand pile at every other seat. Undo brings the old table back.</p>
     </div>
 
     <aside class="preview" id="preview" hidden aria-live="polite">
@@ -56,7 +82,7 @@
 
     <!-- Above the hand: the deal options (when open), then the buttons for the selected stack. -->
     <div class="dock">
-      <div class="deal" id="deal" role="group" aria-label="Deal" hidden>
+      <div class="panel deal" id="deal" role="group" aria-label="Deal" hidden>
         <div class="stepper">
           <span>Players</span>
           <button type="button" data-step="players-" aria-label="Fewer players">−</button>
@@ -65,11 +91,11 @@
         </div>
         <div class="stepper">
           <span>Cards each</span>
-          <button type="button" data-step="cards-" aria-label="Fewer cards">−</button>
-          <output data-value="cards">4</output>
-          <button type="button" data-step="cards+" aria-label="More cards">+</button>
+          <button type="button" data-step="perSeat-" aria-label="Fewer cards">−</button>
+          <output data-value="perSeat">4</output>
+          <button type="button" data-step="perSeat+" aria-label="More cards">+</button>
         </div>
-        <button type="button" class="primary" data-deal>Deal</button>
+        <button type="button" class="primary" data-confirm>Deal</button>
         <p class="note">You are seat 1: your cards go to your hand. Other seats get piles around the table.</p>
       </div>
       <div class="actions" id="actions" role="toolbar" aria-label="Selected cards" hidden>
@@ -78,10 +104,10 @@
         <button type="button" data-action="flip" title="Flip (F)">Flip</button>
         <button type="button" data-action="turn-right" title="Turn right (E)" aria-label="Turn right">⟳</button>
         <button type="button" data-action="draw" title="Into your hand (D)">Draw</button>
-        <button type="button" data-action="shuffle" data-needs="many" title="Shuffle (S)">Shuffle</button>
-        <button type="button" data-action="deal" data-needs="many" aria-controls="deal" aria-expanded="false">Deal…</button>
-        <button type="button" data-action="spread" data-needs="many" title="Lay the cards out in a row">Spread</button>
-        <button type="button" data-action="gather" title="Pile up the cards touching this one">Gather</button>
+        <button type="button" data-action="shuffle" title="Shuffle (S)">Shuffle</button>
+        <button type="button" data-action="deal" title="Deal (Shift+D)" aria-controls="deal" aria-expanded="false">Deal…</button>
+        <button type="button" data-action="spread" title="Lay the cards out in a row (L)">Spread</button>
+        <button type="button" data-action="gather" title="Pile up the cards touching this one (G)">Gather</button>
       </div>
     </div>
 

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { footprintsOverlap } from '../model/plans';
-import type { Action, CardState, StackState, Table, TableState } from '../model/table';
+import type { CardState, StackState, Table, TableChange, TableState } from '../model/table';
 import { CARD_MATERIAL, createCardGeometry } from './cardGeometry';
 import type { CardTextures } from './cardTextures';
 import { CARD_THICKNESS, CARD_WIDTH } from '../model/dimensions';
@@ -19,7 +19,7 @@ export function stackTopY(count: number): number {
   return count * CARD_PITCH;
 }
 
-/** A stack the pointer is carrying: drawn at this spot instead of where the table state has it. */
+/** A stack being carried: drawn at this spot instead of where the table state has it. */
 export interface Lift {
   stackId: string;
   x: number;
@@ -42,7 +42,8 @@ export class CardLayer {
   private readonly edgeMaterial = new THREE.MeshStandardMaterial({ color: '#e7dcc0', roughness: 0.85 });
   private readonly unsubscribe: () => void;
   private state: TableState;
-  private lift: Lift | null = null;
+  /** Carried stacks, by stack id. */
+  private readonly lifts = new Map<string, Lift>();
   /** How high each stack's bottom card rests: on the felt, or on top of stacks put down before it that it overlaps. */
   private readonly elevation = new Map<string, number>();
 
@@ -62,19 +63,26 @@ export class CardLayer {
     const t = 1 - Math.exp(-GLIDE_RATE * deltaSeconds);
     const tDrag = 1 - Math.exp(-DRAG_GLIDE_RATE * deltaSeconds);
     for (const [cardId, view] of this.views) {
-      view.glide(this.lift && this.stackOfCard.get(cardId) === this.lift.stackId ? tDrag : t);
+      const stackId = this.stackOfCard.get(cardId);
+      view.glide(stackId && this.lifts.has(stackId) ? tDrag : t);
     }
   }
 
   /** Draws a stack at a carried position, or puts it back where the state has it with `null`. */
   setLift(lift: Lift | null): void {
-    const previous = this.lift?.stackId;
-    this.lift = lift;
-    if (previous !== lift?.stackId) {
+    this.setLifts(lift ? [lift] : []);
+  }
+
+  /** Draws several stacks at carried positions; stacks left out go back to where the state has them. */
+  setLifts(lifts: readonly Lift[]): void {
+    const same = lifts.length === this.lifts.size && lifts.every((lift) => this.lifts.has(lift.stackId));
+    this.lifts.clear();
+    for (const lift of lifts) this.lifts.set(lift.stackId, lift);
+    if (!same) {
       // Cards resting on a stack that is picked up (or put back) settle to their new height.
       this.layout(false);
-    } else if (lift) {
-      this.placeStack(lift.stackId, false);
+    } else {
+      for (const lift of lifts) this.placeStack(lift.stackId, false);
     }
   }
 
@@ -96,7 +104,7 @@ export class CardLayer {
     for (const hit of hits) {
       const cardId = hit.object.userData.cardId as string | undefined;
       const stackId = cardId ? this.stackOfCard.get(cardId) : undefined;
-      if (!cardId || !stackId || stackId === this.lift?.stackId) continue;
+      if (!cardId || !stackId || this.lifts.has(stackId)) continue;
       return { cardId, stackId };
     }
     return null;
@@ -111,11 +119,13 @@ export class CardLayer {
     this.edgeMaterial.dispose();
   }
 
-  private sync(state: TableState, action: Action | null): void {
-    const snap = action === null;
+  private sync(state: TableState, change: TableChange | null): void {
+    const snap = change === null || change.type === 'load';
     this.state = state;
     this.stackOfCard.clear();
-    if (this.lift && !state.stacks[this.lift.stackId]) this.lift = null;
+    for (const stackId of this.lifts.keys()) {
+      if (!state.stacks[stackId]) this.lifts.delete(stackId);
+    }
     const seen = new Set<string>();
     const fresh: CardView[] = [];
     for (const stack of Object.values(state.stacks)) {
@@ -143,7 +153,7 @@ export class CardLayer {
     this.layout(snap);
     // Cards that just arrived (dealt in, or played from a hand) appear in place rather than flying in from the origin.
     for (const view of fresh) view.snap();
-    if (action?.type === 'shuffleStack') this.riffle(action.stackId);
+    if (change?.type === 'shuffleStack') this.riffle(change.stackId);
   }
 
   /** Works out every stack's resting height, then sends each card toward its place. */
@@ -152,7 +162,7 @@ export class CardLayer {
     const placed: StackState[] = [];
     for (const stack of Object.values(this.state.stacks)) {
       let base = 0;
-      if (stack.id !== this.lift?.stackId) {
+      if (!this.lifts.has(stack.id)) {
         for (const below of placed) {
           if (footprintsOverlap(below, stack)) {
             base = Math.max(base, (this.elevation.get(below.id) ?? 0) + stackTopY(below.cardIds.length));
@@ -184,7 +194,7 @@ export class CardLayer {
   }
 
   private placeCard(view: CardView, stack: StackState, index: number, snap: boolean): void {
-    const lifted = this.lift?.stackId === stack.id ? this.lift : null;
+    const lifted = this.lifts.get(stack.id);
     const x = lifted ? lifted.x : stack.x;
     const z = lifted ? lifted.z : stack.z;
     const base = lifted ? lifted.y : (this.elevation.get(stack.id) ?? 0);

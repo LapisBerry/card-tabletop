@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import sample from '../data/wild-west-sample.json';
 import { parseCardSet } from './cardSet';
 import { LOCAL_HAND_ID, seats } from './layout';
-import { STARTING_HAND, demoSetup } from './setup';
-import { Table, TableActionError, emptyTable, reduce, stackOfCard, type Action } from './table';
+import { newGame } from './setup';
+import { Table, TableActionError, buildTable, emptyTable, reduce, stackOfCard, type Action } from './table';
 
 const oneCard = (stackId: string, cardId: string): Action => ({
   type: 'createStack',
@@ -47,21 +47,128 @@ describe('Table', () => {
   });
 });
 
-describe('demoSetup', () => {
-  it('puts every card of the sample deck on the table or in the hand exactly once', () => {
-    const { faces } = parseCardSet(sample);
+describe('Table history', () => {
+  it('undoes and redoes whole steps, each made of every action since its checkpoint', () => {
     const table = new Table();
-    for (const action of demoSetup(faces, () => 0.5)) table.dispatch(action);
+    table.dispatch(oneCard('s1', 'c1')); // setup: not undoable
+    table.checkpoint();
+    table.dispatch({ type: 'moveStack', stackId: 's1', x: 5, z: 5 });
+    table.dispatch({ type: 'turnStack', stackId: 's1', by: 1 });
+    table.checkpoint();
+    table.dispatch({ type: 'flipStack', stackId: 's1' });
+    const flipped = table.state;
 
+    expect(table.undo()).toBe(true);
+    expect(table.state.cards.c1?.faceUp).toBe(true);
+    expect(table.state.stacks.s1).toMatchObject({ x: 5, z: 5, turn: 2 });
+    expect(table.undo()).toBe(true);
+    expect(table.state.stacks.s1).toMatchObject({ x: 1, z: 2, turn: 1 });
+    expect(table.undo()).toBe(false);
+    expect(table.canUndo).toBe(false);
+
+    table.redo();
+    table.redo();
+    expect(table.state).toBe(flipped);
+    expect(table.canRedo).toBe(false);
+  });
+
+  it('does not record a checkpoint that nothing followed, and a new step clears redo', () => {
+    const table = new Table();
+    table.dispatch(oneCard('s1', 'c1'));
+    table.checkpoint();
+    table.dispatch({ type: 'turnStack', stackId: 's1', by: 1 });
+    table.undo();
+    table.checkpoint(); // a click that changed nothing
+    expect(table.canRedo).toBe(true);
+    table.dispatch({ type: 'turnStack', stackId: 's1', by: -1 });
+    expect(table.canRedo).toBe(false);
+  });
+
+  it('cancels the step in progress without keeping it for redo', () => {
+    const table = new Table();
+    table.dispatch(oneCard('s1', 'c1'));
+    const before = table.state;
+    table.checkpoint();
+    table.dispatch({ type: 'moveStack', stackId: 's1', x: 9, z: 9 });
+    table.cancelStep();
+    expect(table.state).toBe(before);
+    expect(table.canUndo).toBe(false);
+    expect(table.canRedo).toBe(false);
+  });
+
+  it('keeps the history when an action fails', () => {
+    const table = new Table();
+    table.dispatch(oneCard('s1', 'c1'));
+    table.checkpoint();
+    expect(() => table.dispatch({ type: 'flipStack', stackId: 'nope' })).toThrow(TableActionError);
+    expect(table.canUndo).toBe(false);
+  });
+
+  it('replaces the whole table as one undoable step, and loads without history', () => {
+    const table = new Table();
+    const changes: string[] = [];
+    table.subscribe((_, change) => changes.push(change.type));
+    table.dispatch(oneCard('s1', 'c1'));
+    const fresh = reduce(emptyTable, oneCard('s9', 'c9'));
+    table.replace(fresh);
+    expect(table.state).toBe(fresh);
+    table.undo();
+    expect(Object.keys(table.state.stacks)).toEqual(['s1']);
+    table.load(fresh);
+    expect(table.canUndo || table.canRedo).toBe(false);
+    expect(changes).toEqual(['createStack', 'restore', 'restore', 'load']);
+  });
+});
+
+describe('newGame', () => {
+  const { faces } = parseCardSet(sample);
+
+  it('puts every play card and one character per seat on the table or in the hand, each once', () => {
+    const state = buildTable(newGame(faces, { players: 4, perSeat: 4 }, () => 0.5));
     const placed = [
-      ...Object.values(table.state.stacks).flatMap((stack) => stack.cardIds),
-      ...Object.values(table.state.hands).flatMap((hand) => hand.cardIds),
+      ...Object.values(state.stacks).flatMap((stack) => stack.cardIds),
+      ...Object.values(state.hands).flatMap((hand) => hand.cardIds),
     ];
-    expect(placed).toHaveLength(faces.length);
-    expect(new Set(placed).size).toBe(faces.length);
-    const faceIds = placed.map((id) => table.state.cards[id]?.faceId).sort();
-    expect(faceIds).toEqual(faces.map((face) => face.id).sort());
-    expect(table.state.hands[LOCAL_HAND_ID]?.cardIds).toHaveLength(STARTING_HAND);
+    expect(new Set(placed).size).toBe(placed.length);
+    const placedFaces = placed.map((id) => state.cards[id]?.faceId);
+    const playFaces = faces.filter((face) => face.kind !== 'character').map((face) => face.id);
+    expect(placedFaces.filter((id) => playFaces.includes(id as string)).sort()).toEqual([...playFaces].sort());
+    // The characters left over stay in the box.
+    expect(placed).toHaveLength(playFaces.length + 4);
+  });
+
+  it('gives each seat a face-up character, deals the hands, and leaves the deck face down on the draw spot', () => {
+    const state = buildTable(newGame(faces, { players: 5, perSeat: 3 }, Math.random));
+    const kindOf = (cardId: string) => faces.find((face) => face.id === state.cards[cardId]?.faceId)?.kind;
+    const stacks = Object.values(state.stacks);
+    const characters = stacks.filter((stack) => stack.cardIds.some((id) => kindOf(id) === 'character'));
+    expect(characters).toHaveLength(5);
+    for (const stack of characters) {
+      expect(stack.cardIds).toHaveLength(1);
+      expect(state.cards[stack.cardIds[0] as string]?.faceUp).toBe(true);
+    }
+    expect(state.hands[LOCAL_HAND_ID]?.cardIds).toHaveLength(3);
+    const handPiles = stacks.filter((stack) => stack.cardIds.length === 3);
+    expect(handPiles).toHaveLength(4);
+    expect(handPiles.every((pile) => pile.cardIds.every((id) => !state.cards[id]?.faceUp))).toBe(true);
+    const deck = stacks.find((stack) => stack.x === -5 && stack.z === -2);
+    const playCards = faces.filter((face) => face.kind !== 'character').length;
+    expect(deck?.cardIds).toHaveLength(playCards - 5 * 3);
+    expect(deck?.cardIds.some((id) => kindOf(id) === 'character')).toBe(false);
+  });
+
+  it("keeps every seat's cards apart and on the table, for any number of players", () => {
+    for (let players = 2; players <= 7; players++) {
+      const state = buildTable(newGame(faces, { players, perSeat: 2 }));
+      const stacks = Object.values(state.stacks);
+      for (const a of stacks) {
+        expect(Math.abs(a.x)).toBeLessThan(55 - 3);
+        expect(Math.abs(a.z)).toBeLessThan(36 - 3);
+        for (const b of stacks) {
+          if (a !== b) expect(Math.hypot(a.x - b.x, a.z - b.z)).toBeGreaterThan(6);
+        }
+      }
+    }
   });
 });
 

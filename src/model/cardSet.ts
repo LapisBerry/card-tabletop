@@ -20,6 +20,8 @@ export interface CardFace {
   text: string;
   suit?: Suit;
   rank?: string;
+  /** Starting health printed on a character card. */
+  health?: number;
 }
 
 export interface CardSet {
@@ -45,6 +47,8 @@ export interface CardDesignJson {
   text?: string;
   /** Rank and suit of each copy, like "AS" or "10H". Leave out for a single unmarked copy. */
   copies?: string[];
+  /** Starting health, printed on character cards: a whole number from 1 to 9. */
+  health?: number;
 }
 
 const KINDS: readonly CardKind[] = ['action', 'equipment', 'character', 'role'];
@@ -83,10 +87,15 @@ export function parseCardSet(json: unknown): CardSet {
       throw new CardSetError(`${label} has kind ${JSON.stringify(kind)}; use one of ${KINDS.join(', ')}.`);
     }
     const text = entry.text === undefined ? '' : requireString(entry, 'text', label);
+    const health = entry.health;
+    if (health !== undefined && (typeof health !== 'number' || !Number.isInteger(health) || health < 1 || health > 9)) {
+      throw new CardSetError(`${label} has health ${JSON.stringify(health)}; use a whole number from 1 to 9.`);
+    }
+    const extra = health === undefined ? {} : { health };
 
     const copies = entry.copies;
     if (copies === undefined) {
-      faces.push({ id: designId, designId, name: cardName, kind: kind as CardKind, text });
+      faces.push({ id: designId, designId, name: cardName, kind: kind as CardKind, text, ...extra });
       return;
     }
     if (!Array.isArray(copies) || copies.length === 0) {
@@ -107,6 +116,7 @@ export function parseCardSet(json: unknown): CardSet {
         text,
         rank: match[1],
         suit: SUITS[match[2] as string],
+        ...extra,
       });
     });
   });

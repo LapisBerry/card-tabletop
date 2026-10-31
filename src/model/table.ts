@@ -366,20 +366,103 @@ export function stackOfCard(state: TableState, cardId: string): StackState | und
   return undefined;
 }
 
-type Listener = (state: TableState, action: Action) => void;
+/**
+ * What changed the table: an action, or a jump to another whole state.
+ * `restore` is an undo or redo, which the view animates like any other change;
+ * `load` is a table read back from storage, which the view shows at once.
+ */
+export type TableChange = Action | { type: 'restore' } | { type: 'load' };
 
-/** Holds the current state and tells listeners, such as the 3D view, about each change. */
+type Listener = (state: TableState, change: TableChange) => void;
+
+/** How many steps Undo can go back. */
+export const HISTORY_LIMIT = 200;
+
+/**
+ * Holds the current table state and tells listeners about every change.
+ *
+ * It also keeps an undo history on this screen. Call `checkpoint()` at the
+ * start of each thing a player does (a drag, a button, a key): every action
+ * dispatched after it, until the next checkpoint, is undone together.
+ */
 export class Table {
   private current: TableState = emptyTable;
   private readonly listeners = new Set<Listener>();
+  private readonly past: TableState[] = [];
+  private future: TableState[] = [];
+  /** A checkpoint was asked for and the next action starts a new undo step. */
+  private stepPending = false;
 
   get state(): TableState {
     return this.current;
   }
 
+  get canUndo(): boolean {
+    return this.past.length > 0;
+  }
+
+  get canRedo(): boolean {
+    return this.future.length > 0;
+  }
+
   dispatch(action: Action): void {
-    this.current = reduce(this.current, action);
-    for (const listener of this.listeners) listener(this.current, action);
+    // Work out the new state first: an action that fails leaves the table and its history alone.
+    const next = reduce(this.current, action);
+    if (this.stepPending) {
+      this.remember(this.current);
+      this.future = [];
+      this.stepPending = false;
+    }
+    this.set(next, action);
+  }
+
+  /** Starts a new undo step. Nothing is recorded until an action actually changes the table. */
+  checkpoint(): void {
+    this.stepPending = true;
+  }
+
+  /** Takes back the step in progress without keeping it for Redo, as when a drag is cancelled. */
+  cancelStep(): void {
+    if (this.stepPending) {
+      this.stepPending = false;
+      return;
+    }
+    const previous = this.past.pop();
+    if (previous) this.set(previous, { type: 'restore' });
+  }
+
+  undo(): boolean {
+    this.stepPending = false;
+    const previous = this.past.pop();
+    if (!previous) return false;
+    this.future.push(this.current);
+    this.set(previous, { type: 'restore' });
+    return true;
+  }
+
+  redo(): boolean {
+    this.stepPending = false;
+    const next = this.future.pop();
+    if (!next) return false;
+    this.remember(this.current);
+    this.set(next, { type: 'restore' });
+    return true;
+  }
+
+  /** Swaps in a whole new table as one step that Undo can take back, as for a new game. */
+  replace(state: TableState): void {
+    this.stepPending = false;
+    this.remember(this.current);
+    this.future = [];
+    this.set(state, { type: 'restore' });
+  }
+
+  /** Shows a table read back from storage, with no undo history. */
+  load(state: TableState): void {
+    this.stepPending = false;
+    this.past.length = 0;
+    this.future = [];
+    this.set(state, { type: 'load' });
   }
 
   /** Calls `listener` after every change. Returns a function that stops it. */
@@ -387,6 +470,21 @@ export class Table {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
+
+  private remember(state: TableState): void {
+    this.past.push(state);
+    if (this.past.length > HISTORY_LIMIT) this.past.shift();
+  }
+
+  private set(state: TableState, change: TableChange): void {
+    this.current = state;
+    for (const listener of this.listeners) listener(state, change);
+  }
+}
+
+/** Applies a list of actions to an empty table, as for a game set up from scratch. */
+export function buildTable(actions: readonly Action[]): TableState {
+  return actions.reduce(reduce, emptyTable);
 }
 
 /** Makes short ids like "card-12". One generator per table keeps them unique. */
